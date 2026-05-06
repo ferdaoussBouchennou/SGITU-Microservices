@@ -1,5 +1,30 @@
 package ma.sgitu.g5.provider;
 
-public class TwilioSMSAdapter {
+import java.util.UUID;
 
+import lombok.extern.slf4j.Slf4j;
+import ma.sgitu.g5.dto.response.SendResultDTO;
+import org.springframework.stereotype.Service;
+
+@Service
+@Slf4j
+public class TwilioSMSAdapter implements ISMSProvider {
+    @Override
+    public SendResultDTO send(String phone, String message) {
+        if (phone == null || phone.isBlank()) {
+            SendResultDTO result = new SendResultDTO();
+            result.setSuccess(false);
+            result.setErrorCode("PHONE_MISSING");
+            result.setRetryCount(0);
+            return result;
+        }
+
+        log.info("[G5-SMS] Simule -> {} | {}", phone, message);
+
+        SendResultDTO result = new SendResultDTO();
+        result.setSuccess(true);
+        result.setProvider("twilio-mock-" + UUID.randomUUID());
+        result.setRetryCount(0);
+        return result;
+    }
 }
