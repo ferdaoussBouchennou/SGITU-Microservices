@@ -5,6 +5,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -29,14 +30,22 @@ import java.util.Map;
 @RequestMapping("/api/notifications")
 @RequiredArgsConstructor
 @Validated
-@Tag(name = "Notifications", description = "API centrale du microservice G5")
+@Tag(name = "Notifications", description = "API centrale du microservice G5 - Gestion des notifications Email, SMS et Push")
 public class NotificationController {
 
     private final INotificationService notificationService;
     private final NotificationRepository notificationRepository;
 
     @PostMapping("/send")
-    @Operation(summary = "Envoyer une notification")
+    @Operation(
+            summary = "Envoyer une notification",
+            description = "Envoie une notification via EMAIL, SMS ou PUSH. Retourne immédiatement avec statut QUEUED, l'envoi est asynchrone."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "202", description = "Notification acceptée et en cours de traitement"),
+            @ApiResponse(responseCode = "400", description = "Canal non supporté ou destinataire manquant"),
+            @ApiResponse(responseCode = "401", description = "JWT manquant ou invalide")
+    })
     public ResponseEntity<NotificationResponseDTO> send(
             @Valid @RequestBody NotificationRequestDTO dto) {
 
@@ -46,7 +55,14 @@ public class NotificationController {
     }
 
     @GetMapping("/{notificationId}")
-    @Operation(summary = "Consulter le statut d'une notification")
+    @Operation(
+            summary = "Consulter le statut d'une notification",
+            description = "Retourne les détails et le statut actuel d'une notification par son ID"
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Notification trouvée"),
+            @ApiResponse(responseCode = "404", description = "Notification introuvable")
+    })
     public ResponseEntity<Notification> getById(
             @PathVariable String notificationId) {
         Notification n = notificationRepository.findByNotificationId(notificationId)
@@ -55,7 +71,11 @@ public class NotificationController {
     }
 
     @GetMapping
-    @Operation(summary = "Lister les notifications")
+    @Operation(
+            summary = "Lister les notifications",
+            description = "Retourne la liste paginée des notifications. Filtres optionnels : userId, status, sourceService"
+    )
+    @ApiResponse(responseCode = "200", description = "Liste retournée avec succès")
     public ResponseEntity<Page<Notification>> list(
             @RequestParam(required = false) String userId,
             @RequestParam(required = false) String status,
@@ -66,14 +86,26 @@ public class NotificationController {
     }
 
     @PostMapping("/{notificationId}/retry")
-    @Operation(summary = "Relancer une notification en échec")
+    @Operation(
+            summary = "Relancer une notification en échec",
+            description = "Relance manuellement une notification avec statut FAILED. Max 3 tentatives avec backoff exponentiel."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "202", description = "Relance acceptée"),
+            @ApiResponse(responseCode = "400", description = "Retry non applicable - statut != FAILED"),
+            @ApiResponse(responseCode = "404", description = "Notification introuvable")
+    })
     public ResponseEntity<NotificationResponseDTO> retry(
             @PathVariable String notificationId) {
         return ResponseEntity.accepted().body(notificationService.retry(notificationId));
     }
 
     @GetMapping("/health")
-    @Operation(summary = "Health-check")
+    @Operation(
+            summary = "Health-check",
+            description = "Vérifie que le microservice G5 est opérationnel"
+    )
+    @ApiResponse(responseCode = "200", description = "Service UP")
     public ResponseEntity<Map<String, Object>> health() {
         Map<String, Object> health = new LinkedHashMap<>();
         health.put("status", "UP");
