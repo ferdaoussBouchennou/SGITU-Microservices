@@ -9,10 +9,18 @@ import java.time.LocalDateTime;
  * Inclut des index pour optimiser les recherches par userId et statut.
  */
 @Entity
-@Table(name = "notifications", indexes = {
-    @Index(name = "idx_notification_id", columnList = "notification_id"),
-    @Index(name = "idx_user_status", columnList = "user_id, status")
-})
+@Table(name = "notifications",
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_source_notif",
+                        columnNames = {"source_service", "notification_id"}
+                )
+        },
+        indexes = {
+                @Index(name = "idx_source_notif", columnList = "source_service, notification_id"),
+                @Index(name = "idx_user_status",   columnList = "user_id, status")
+        }
+)
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -23,7 +31,8 @@ public class Notification {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "notification_id", unique = true, nullable = false, length = 100)
+    // Clé de déduplication = (source_service + notification_id) — voir @UniqueConstraint
+    @Column(name = "notification_id", nullable = false, length = 100)
     private String notificationId;
 
     @Column(name = "user_id", nullable = false, length = 100)
@@ -60,13 +69,14 @@ public class Notification {
 
     @Column(length = 100)
     private String provider;
-    
-    @Column(name = "source_service", length = 100)
+
+    // Normalisé en majuscules à la réception — utilisé comme namespace de déduplication
+    @Column(name = "source_service", nullable = false, length = 100)
     private String sourceService;
-    
+
     @Column(name = "event_type", length = 100)
     private String eventType;
-    
+
     @Column(length = 20)
     private String priority;
 
@@ -83,7 +93,9 @@ public class Notification {
     @PrePersist
     protected void onCreate() {
         this.createdAt = LocalDateTime.now();
-        if (this.status == null) this.status = NotificationStatus.PENDING;
-        if (this.priority == null) this.priority = "NORMAL";
+        if (this.status == null)
+            this.status = NotificationStatus.PENDING;
+        if (this.priority == null)
+            this.priority = "NORMAL";
     }
 }

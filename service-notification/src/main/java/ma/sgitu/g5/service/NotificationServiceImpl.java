@@ -34,8 +34,16 @@ public class NotificationServiceImpl implements INotificationService {
             notificationId = UUID.randomUUID().toString();
         }
 
-        if (notificationRepository.existsByNotificationId(notificationId)) {
-            log.warn("[G5] Notification déjà existante (idempotence) : {}", notificationId);
+        // Normalisation sourceService — garantit unicité même si un groupe envoie "payment" au lieu de "PAYMENT"
+        String sourceService = (dto.getSourceService() != null)
+                ? dto.getSourceService().toUpperCase().trim()
+                : "UNKNOWN";
+        dto.setSourceService(sourceService);
+
+        // Déduplication composite : (sourceService + notificationId) = clé unique globale
+        // Deux groupes différents avec le même UUID ne génèrent PAS de collision
+        if (notificationRepository.existsBySourceServiceAndNotificationId(sourceService, notificationId)) {
+            log.warn("[G5] Doublon détecté (id={}  source={}) — ignoré (idempotence)", notificationId, sourceService);
             return buildResponse(notificationId, "ALREADY_QUEUED",
                     "Notification déjà prise en charge", dto.getChannel());
         }
@@ -55,7 +63,7 @@ public class NotificationServiceImpl implements INotificationService {
     @Override
     @Transactional
     public NotificationResponseDTO retry(String notificationId) {
-        Notification entity = notificationRepository.findByNotificationId(notificationId)
+        Notification entity = notificationRepository.findFirstByNotificationId(notificationId)
                 .orElseThrow(() -> new IllegalArgumentException("Notification introuvable : " + notificationId));
 
         if (entity.getStatus() != NotificationStatus.FAILED) {

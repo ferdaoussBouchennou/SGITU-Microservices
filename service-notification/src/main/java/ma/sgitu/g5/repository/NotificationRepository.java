@@ -8,6 +8,18 @@ import java.util.Optional;
 
 @Repository
 public interface NotificationRepository extends JpaRepository<Notification, Long> {
-    Optional<Notification> findByNotificationId(String notificationId);
-    boolean existsByNotificationId(String notificationId);
+
+    /**
+     * Déduplication composite : (sourceService + notificationId) = clé unique globale.
+     * Deux groupes différents peuvent envoyer le même UUID sans collision.
+     */
+    boolean existsBySourceServiceAndNotificationId(String sourceService, String notificationId);
+
+    Optional<Notification> findBySourceServiceAndNotificationId(String sourceService, String notificationId);
+
+    /**
+     * Recherche par notificationId seul — utilisé pour le retry via l'API.
+     * Retourne le premier résultat (cas normal : un seul par sourceService).
+     */
+    Optional<Notification> findFirstByNotificationId(String notificationId);
 }
