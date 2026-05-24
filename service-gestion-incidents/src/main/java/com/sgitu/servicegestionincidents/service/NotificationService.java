@@ -8,4 +8,5 @@ public interface NotificationService {
     void envoyerChangementStatut(Incident incident, String ancienStatut);
     void envoyerAlerteIoT(Incident incident);
     void envoyerEscalade(Incident incident, String motif);
+    void envoyerAssignation(Incident incident);
 }

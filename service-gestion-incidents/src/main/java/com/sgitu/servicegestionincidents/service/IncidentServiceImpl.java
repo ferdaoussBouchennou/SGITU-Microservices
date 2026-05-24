@@ -107,6 +107,9 @@ public class IncidentServiceImpl implements IncidentService {
 
         incidentRepository.save(incident);
         log.info("Incident {} assigné au responsable {} — Statut: ASSIGNE", incident.getReference(), responsableId);
+        
+        // Notifier l'agent (G5) selon le contrat
+        notificationService.envoyerAssignation(incident);
 
         // Déclencher G5 (Notification) — changement de statut
         notificationService.envoyerChangementStatut(incident, ancienStatut.name());
