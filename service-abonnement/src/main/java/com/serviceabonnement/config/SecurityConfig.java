@@ -26,17 +26,18 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/actuator/**").permitAll()
                         // Plans: Public for GET, ADMIN for others
                         .requestMatchers(HttpMethod.GET, "/plans/**").permitAll()
                         .requestMatchers("/plans/**").hasRole("ADMIN_G2")
                         
                         // Abonnements
+                        .requestMatchers(HttpMethod.GET, "/abonnements/**").permitAll()
                         .requestMatchers("/abonnements/paiement/confirmation").permitAll()
                         .requestMatchers("/abonnements/remboursement/confirmation").permitAll()
                         .requestMatchers("/abonnements/users/*/actif").permitAll()
                         .requestMatchers("/abonnements/**").authenticated()
                         
-                        .requestMatchers("/actuator/**").permitAll()
                         .requestMatchers(
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
