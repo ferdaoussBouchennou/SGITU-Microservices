@@ -4,6 +4,7 @@ import com.g7suivivehicules.entity.Alert;
 import com.g7suivivehicules.entity.Alert.StatutAlert;
 import com.g7suivivehicules.entity.Alert.TypeAlert;
 import com.g7suivivehicules.entity.Alert.Severite;
+import com.g7suivivehicules.exception.AlertNotFoundException;
 import com.g7suivivehicules.kafka.KafkaProducerService;
 import com.g7suivivehicules.repository.AlertRepository;
 import lombok.RequiredArgsConstructor;
@@ -158,8 +159,7 @@ public class AlertService {
     @Transactional(readOnly = true)
     public Alert trouverParId(UUID alertId) {
         return alertRepository.findById(alertId)
-                .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException(
-                        "Alerte introuvable : " + alertId));
+                .orElseThrow(() -> new AlertNotFoundException(alertId));
     }
 
     @Transactional(readOnly = true)

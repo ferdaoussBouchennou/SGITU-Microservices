@@ -28,11 +28,11 @@ services:
   #  G2 — Service Abonnement (port 8082)
   # ---------------------------------------------------------------
   abonnement-service:
-    build: 
+    build:
       context: ./service-abonnement
       dockerfile: Dockerfile
       target: runner
-      
+
     container_name: service-abonnement
     ports:
       - "8082:8082"
@@ -65,7 +65,7 @@ services:
     volumes:
       - abonnement_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
       timeout: 5s
       retries: 10
     networks:
@@ -120,7 +120,7 @@ services:
     volumes:
       - g3_users_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${users_DB_USER}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${users_DB_USER}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -188,7 +188,7 @@ services:
     volumes:
       - g7_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${suivi_vehicule_DB_USER} -d ${suivi_vehicule_DB_NAME}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${suivi_vehicule_DB_USER} -d ${suivi_vehicule_DB_NAME}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -241,7 +241,7 @@ services:
   # ---------------------------------------------------------------
   kafka:
     image: confluentinc/cp-kafka:7.8.7
-    container_name: sgitu-kafka          # ← préfixé pour éviter conflit
+    container_name: sgitu-kafka # ← préfixé pour éviter conflit
     hostname: kafka
     networks:
       - sgitu-network
@@ -269,7 +269,7 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      test: [ "CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092" ]
       interval: 15s
       timeout: 10s
       retries: 10
