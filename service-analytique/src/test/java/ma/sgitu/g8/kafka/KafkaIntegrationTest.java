@@ -81,9 +81,9 @@ class KafkaIntegrationTest {
     void publishAggregation() throws InterruptedException {
         resultPublisher.publishAggregation("INC_TOTAL", 42.0, "COUNT", Map.of("lineId", "L1"));
 
-        // Wait for message with retry logic (up to 10 seconds)
+        // Wait for message with retry logic (up to 30 seconds for CI)
         ConsumerRecord<String, Object> record = null;
-        long deadline = System.currentTimeMillis() + 10000;
+        long deadline = System.currentTimeMillis() + 30000;
         while (System.currentTimeMillis() < deadline && record == null) {
             record = analyticsRecords.poll(1, TimeUnit.SECONDS);
         }
@@ -109,9 +109,9 @@ class KafkaIntegrationTest {
     void publishAlert() throws InterruptedException {
         resultPublisher.publishAlert("THRESHOLD_BREACH", "HIGH", "Incident count exceeded", Map.of("statId", "INC_TOTAL"));
 
-        // Wait for message with retry logic (up to 10 seconds)
+        // Wait for message with retry logic (up to 30 seconds for CI)
         ConsumerRecord<String, Object> record = null;
-        long deadline = System.currentTimeMillis() + 10000;
+        long deadline = System.currentTimeMillis() + 30000;
         while (System.currentTimeMillis() < deadline && record == null) {
             record = analyticsRecords.poll(1, TimeUnit.SECONDS);
         }

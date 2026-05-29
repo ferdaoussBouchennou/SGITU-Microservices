@@ -9,8 +9,6 @@ spring:
       group-id: g8-analytics-group-test
       auto-offset-reset: earliest
       enable-auto-commit: false
-  autoconfigure:
-    exclude: org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
 
 kafka:
   topics:
@@ -26,6 +24,15 @@ kafka:
   retry:
     interval: 100
     max-attempts: 2
+
+# CI-specific settings for slower environments
+spring:
+  kafka:
+    consumer:
+      max-poll-records: 100
+      fetch-max-wait-ms: 500
+      session-timeout-ms: 30000
+      heartbeat-interval-ms: 10000
 
 g5:
   notification:
