@@ -46,6 +46,12 @@ public class Abonnement {
     @Column(name = "nb_tentatives_remb")
     private int nbTentativesRemb;
 
+    @Column(name = "nb_tentatives_paiement")
+    private int nbTentativesPaiement;
+
+    @Column(name = "date_derniere_tentative_paiement")
+    private LocalDateTime dateDerniereTentativePaiement;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private StatutAbonnement statut;

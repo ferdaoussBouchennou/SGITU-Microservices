@@ -20,10 +20,12 @@ import com.serviceabonnement.exception.UtilisateurNotFoundException;
 import com.serviceabonnement.producer.SubscriptionEventPublisher;
 import com.serviceabonnement.repository.AbonnementRepository;
 import com.serviceabonnement.repository.AnalytiqueTraceRepository;
+import com.serviceabonnement.repository.DesactivationRepository;
 import com.serviceabonnement.repository.PlanAbonnementRepository;
+import com.serviceabonnement.repository.RenouvellementRepository;
+import com.serviceabonnement.repository.SuspensionAdminRepository;
 import com.serviceabonnement.service.AbonnementService;
 import com.serviceabonnement.entity.SuspensionAdmin;
-import com.serviceabonnement.repository.SuspensionAdminRepository;
 import com.serviceabonnement.entity.AnalytiqueTrace;
 import com.serviceabonnement.entity.Desactivation;
 import io.github.resilience4j.bulkhead.annotation.Bulkhead;
@@ -57,6 +59,9 @@ public class AbonnementServiceImpl implements AbonnementService {
     private final AnalyseClient analyseClient;
     private final SubscriptionEventPublisher eventPublisher;
     private final AnalytiqueTraceRepository analytiqueTraceRepository;
+    private final DesactivationRepository desactivationRepository;
+    private final RenouvellementRepository renouvellementRepository;
+    private final SuspensionAdminRepository suspensionAdminRepository;
 
     @Autowired
     @Lazy
@@ -70,26 +75,35 @@ public class AbonnementServiceImpl implements AbonnementService {
     public Abonnement souscrire(Long userId, Long planId, String email) {
         log.info("Tentative de souscription pour l'utilisateur {} au plan {}", userId, planId);
 
-        // User verification is delegated to the API Gateway
-        // We trust the userId provided by the gateway
-        
-        if (email == null) {
-            email = ""; // Fallback to empty string if email not in JWT
+        if (email == null) email = "";
+
+        // 1. Vérification Utilisateur via G3
+        UserDTO user;
+        try {
+            user = userClient.getUserById(userId);
+        } catch (Exception e) {
+            log.warn("Impossible de vérifier l'utilisateur {} via G3: {}", userId, e.getMessage());
+            user = null;
+        }
+        if (user == null || !user.isActive()) {
+            throw new UtilisateurNotFoundException(userId);
         }
 
-        // 1. Récupération du Plan
+        // 2. Récupération du Plan
         PlanAbonnement plan = planRepository.findById(planId)
                 .orElseThrow(() -> new PlanNotFoundException(planId));
 
-        // 2. Vérification d'éligibilité via les rôles du JWT (from SecurityContext)
+        // 3. Vérification d'éligibilité via les rôles du JWT (from SecurityContext)
         List<String> userRoles = extractUserRoles();
         if (!isEligibleForPlan(userRoles, plan.getCategorie().name())) {
             log.error("Utilisateur {} non éligible pour le plan {}", userId, plan.getCategorie().name());
             throw new RegleMetierException("Utilisateur non eligible pour le plan " + plan.getCategorie().name() + ".");
         }
 
-        java.util.Optional<Abonnement> abonnementMemeTransport = abonnementRepository.findByUserIdAndStatut(userId, StatutAbonnement.ACTIF).stream()
-                .filter(abonnementActif -> abonnementActif.getPlan().getTransportType() == plan.getTransportType())
+        // 4. Calcul du prix (plan-change vs nouvelle souscription)
+        java.util.Optional<Abonnement> abonnementMemeTransport = abonnementRepository
+                .findByUserIdAndStatut(userId, StatutAbonnement.ACTIF).stream()
+                .filter(a -> a.getPlan().getTransportType() == plan.getTransportType())
                 .findFirst();
 
         double prixAPayer = plan.getPrix();
@@ -97,48 +111,31 @@ public class AbonnementServiceImpl implements AbonnementService {
         if (abonnementMemeTransport.isPresent()) {
             Abonnement abonnementActif = abonnementMemeTransport.get();
             validerTransitionAbonnement(abonnementActif, plan);
-            
             double valeurRestante = calculerRemboursement(abonnementActif);
-            
             if (valeurRestante > 0) {
-                if (plan.getPrix() >= valeurRestante) {
-                    prixAPayer = plan.getPrix() - valeurRestante; // Upgrade ou Switch
-                } else {
-                    prixAPayer = 0.0; // Downgrade (remboursement géré lors de l'activation)
-                }
+                prixAPayer = plan.getPrix() >= valeurRestante
+                        ? plan.getPrix() - valeurRestante   // Upgrade / Switch
+                        : 0.0;                              // Downgrade (remboursement à l'activation)
             }
         }
 
-        // 3. Création de l'abonnement (Statut initial : EN_ATTENTE de paiement ou SUSPENDU avant activation)
-        // Note: Dans ce flux, on va considérer qu'on crée l'abonnement en attente
+        // 5. Création du brouillon d'abonnement (EN_ATTENTE_PAIEMENT)
         Abonnement abonnement = Abonnement.builder()
                 .userId(userId)
                 .plan(plan)
-                .prixPaye(prixAPayer) // Snapshot du prix ajusté
-                .statut(StatutAbonnement.EN_ATTENTE_PAIEMENT) // En attente de paiement
+                .prixPaye(prixAPayer)
+                .statut(StatutAbonnement.EN_ATTENTE_PAIEMENT)
                 .renouvellementAuto(true)
                 .build();
-
         abonnement = abonnementRepository.save(abonnement);
 
-        // Envoi au système d'analyse (REST)
         sendToAnalyse(abonnement, "SOUSCRIPTION_INITIALE", prixAPayer);
 
-        // Fetch user phone number for SMS notifications
-        String phone = null;
-        try {
-            UserDTO user = userClient.getUserById(userId);
-            if (user != null && user.getProfile() != null) {
-                phone = user.getProfile().getPhone();
-                if (email == null || email.isEmpty()) {
-                    email = user.getEmail();
-                }
-            }
-        } catch (Exception e) {
-            log.warn("Could not fetch user details for user {}", userId);
-        }
+        // Récupération du téléphone depuis le user déjà chargé
+        String phone = (user.getProfile() != null) ? user.getProfile().getPhone() : null;
+        if (email.isEmpty()) email = user.getEmail();
 
-        // 4. Initiation Paiement (G6)
+        // 6. Initiation Paiement (G6)
         try {
             PaymentRequestDTO paymentRequest = PaymentRequestDTO.builder()
                     .userId(userId)
@@ -146,17 +143,14 @@ public class AbonnementServiceImpl implements AbonnementService {
                     .sourceId(abonnement.getId())
                     .amount(prixAPayer)
                     .paymentMethod(getRandomPaymentMethod())
-                    .email(email) // Email extracted from JWT token or fallback
+                    .email(email)
                     .description("Souscription plan " + plan.getNomPlan())
                     .build();
-
             PaymentResponseDTO paymentResponse = paiementClient.initierPaiement(paymentRequest);
             abonnement.setPaiementId(paymentResponse.getTransactionId());
             abonnementRepository.save(abonnement);
-
         } catch (Exception e) {
             log.error("Échec de l'initiation du paiement pour l'abonnement {}", abonnement.getId());
-            // Event publisher notifies with userId, email, and phone directly
             eventPublisher.publishEchecSouscription(userId, email, phone, plan.getNomPlan(), "Erreur service paiement");
             throw new PaiementServiceException("Impossible d'initier le paiement", e);
         }
@@ -201,10 +195,6 @@ public class AbonnementServiceImpl implements AbonnementService {
         return abonnementRepository.save(abonnement);
     }
 
-    private final com.serviceabonnement.repository.DesactivationRepository desactivationRepository;
-    private final com.serviceabonnement.repository.RenouvellementRepository renouvellementRepository;
-    private final SuspensionAdminRepository suspensionAdminRepository;
-
     @Override
     @Transactional
     public void forcerRenouvellement(Long abonnementId) {
@@ -224,8 +214,8 @@ public class AbonnementServiceImpl implements AbonnementService {
                 .build();
 
         PaymentResponseDTO response = paiementClient.initierPaiement(paymentRequest);
-        
-        com.serviceabonnement.entity.Renouvellement renouvellement = com.serviceabonnement.entity.Renouvellement.builder()
+
+        Renouvellement renouvellement = Renouvellement.builder()
                 .abonnement(abonnement)
                 .paiementId(response.getTransactionId())
                 .dateRenouvellement(LocalDateTime.now())
@@ -234,6 +224,12 @@ public class AbonnementServiceImpl implements AbonnementService {
                 .statut(com.serviceabonnement.enums.StatutRenouvellement.EN_ATTENTE)
                 .build();
         renouvellementRepository.save(renouvellement);
+
+        eventPublisher.publishRenouvellementEffectue(
+                userClient.getUserById(abonnement.getUserId()),
+                abonnement,
+                "MANUEL"
+        );
     }
 
     @Override
@@ -249,8 +245,8 @@ public class AbonnementServiceImpl implements AbonnementService {
         // Vérification des règles de désactivation du plan
         if (jours > plan.getMaxPeriodeDesactivation()) {
             throw new RegleMetierException(
-                "Durée de désactivation " + jours + " jours dépasse le maximum autorisé (" + plan.getMaxPeriodeDesactivation() + " jours)"
-            );
+                    "Durée de désactivation " + jours + " jours dépasse le maximum autorisé ("
+                            + plan.getMaxPeriodeDesactivation() + " jours)");
         }
 
         List<Desactivation> desactivations = desactivationRepository.findByAbonnementId(abonnementId);
@@ -277,11 +273,11 @@ public class AbonnementServiceImpl implements AbonnementService {
         abonnement.setStatut(StatutAbonnement.DESACTIVE);
         // On repousse la date de fin
         abonnement.setDateFin(abonnement.getDateFin().plusDays(jours));
-        
+
         abonnementRepository.save(abonnement);
 
         // Historisation
-        com.serviceabonnement.entity.Desactivation desactivation = com.serviceabonnement.entity.Desactivation.builder()
+        Desactivation desactivation = Desactivation.builder()
                 .abonnement(abonnement)
                 .dateDebutDesactivation(LocalDateTime.now())
                 .dateFinDesactivation(LocalDateTime.now().plusDays(jours))
@@ -305,7 +301,7 @@ public class AbonnementServiceImpl implements AbonnementService {
         if (abonnement.getStatut() == StatutAbonnement.ANNULE ||
                 abonnement.getStatut() == StatutAbonnement.SUSPENDU) {
             throw new AbonnementStatutInvalideException(
-                "Impossible de suspendre un abonnement au statut : " + abonnement.getStatut());
+                    "Impossible de suspendre un abonnement au statut : " + abonnement.getStatut());
         }
         abonnement.setStatut(StatutAbonnement.SUSPENDU);
         abonnementRepository.save(abonnement);
@@ -330,8 +326,7 @@ public class AbonnementServiceImpl implements AbonnementService {
                 abonnement.getPlan().getNomPlan(),
                 adminId,
                 motif,
-                LocalDateTime.now()
-        );
+                LocalDateTime.now());
     }
 
     @Override
@@ -344,43 +339,67 @@ public class AbonnementServiceImpl implements AbonnementService {
                 abonnement.getStatut() == StatutAbonnement.ANNULATION_EN_COURS ||
                 abonnement.getStatut() == StatutAbonnement.EXPIRE) {
             throw new AbonnementStatutInvalideException(
-                "L'abonnement est déjà annulé, expiré ou en cours d'annulation : " + abonnement.getStatut());
+                "L'abonnement est déjà annulé ou en cours d'annulation : " + abonnement.getStatut());
+        }
+
+        // Calcul des jours restants avant la fin de l'abonnement
+        long joursRestants = 0;
+        if (abonnement.getDateFin() != null) {
+            joursRestants = java.time.temporal.ChronoUnit.DAYS.between(LocalDateTime.now(), abonnement.getDateFin());
         }
         
-        // Calcul des jours restants avant la fin de l'abonnement
-        long joursRestants = java.time.temporal.ChronoUnit.DAYS.between(LocalDateTime.now(), abonnement.getDateFin());
         Double montantRemboursement = 0.0;
 
-        if (joursRestants >= 3) {
+        if (joursRestants >= 3 && abonnement.getDateFin() != null) {
             montantRemboursement = calculerRemboursement(abonnement);
         } else {
-            log.info("Annulation de l'abonnement {} sans remboursement car il reste moins de 3 jours ({} jours restants)", abonnementId, joursRestants);
+            log.info(
+                    "Annulation de l'abonnement {} sans remboursement (pas de date de fin ou < 3 jours)",
+                    abonnementId);
+        }
+
+        if (montantRemboursement > 0) {
+            abonnement.setStatut(StatutAbonnement.ANNULATION_EN_COURS);
+        } else {
+            abonnement.setStatut(StatutAbonnement.ANNULE);
+            abonnement.setDateAnnulation(LocalDateTime.now());
         }
         
-        abonnement.setStatut(StatutAbonnement.ANNULATION_EN_COURS);
         abonnement.setDateDemandeAnnulation(LocalDateTime.now());
         abonnementRepository.save(abonnement);
 
-        // Always call payment service G6 to coordinate cancellation/refund, even if refund is 0.0 DH.
-        com.serviceabonnement.dto.external.RefundRequestDTO refundRequest = com.serviceabonnement.dto.external.RefundRequestDTO.builder()
-                .transactionId(abonnement.getPaiementId())
-                .montantRemboursement(montantRemboursement)
-                .motif("Annulation utilisateur - Franchise de 3 jours " + (joursRestants >= 3 ? "respectée" : "non atteinte"))
-                .build();
-        paiementClient.rembourser(refundRequest);
+        // Appel G6 pour le remboursement uniquement si le montant est supérieur à 0
+        if (montantRemboursement > 0) {
+            com.serviceabonnement.dto.external.RefundRequestDTO refundRequest = com.serviceabonnement.dto.external.RefundRequestDTO.builder()
+                    .transactionId(abonnement.getPaiementId())
+                    .montantRemboursement(montantRemboursement)
+                    .motif("Annulation utilisateur - Franchise de 3 jours respectée")
+                    .build();
+            paiementClient.rembourser(refundRequest);
+        }
+
+        eventPublisher.publishAnnulationEffectuee(
+                userClient.getUserById(abonnement.getUserId()),
+                abonnement,
+                montantRemboursement,
+                abonnement.getPaiementId()
+        );
     }
 
     private Double calculerRemboursement(Abonnement abonnement) {
-        if (abonnement.getDateDebut() == null || abonnement.getDateFin() == null) return 0.0;
-        
-        java.time.Duration totalDuration = java.time.Duration.between(abonnement.getDateDebut(), abonnement.getDateFin());
+        if (abonnement.getDateDebut() == null || abonnement.getDateFin() == null)
+            return 0.0;
+
+        java.time.Duration totalDuration = java.time.Duration.between(abonnement.getDateDebut(),
+                abonnement.getDateFin());
         java.time.Duration remainingDuration = java.time.Duration.between(LocalDateTime.now(), abonnement.getDateFin());
-        
+
         long totalDays = totalDuration.toDays();
         long remainingDays = remainingDuration.toDays();
-        
-        if (totalDays <= 0 || remainingDays <= 0) return 0.0;
-        
+
+        if (totalDays <= 0 || remainingDays <= 0)
+            return 0.0;
+
         return (abonnement.getPrixPaye() / totalDays) * remainingDays;
     }
 
@@ -420,7 +439,7 @@ public class AbonnementServiceImpl implements AbonnementService {
                 .build();
 
         PaymentResponseDTO response = paiementClient.initierPaiement(paymentRequest);
-        
+
         Renouvellement renouvellement = Renouvellement.builder()
                 .abonnement(abonnement)
                 .paiementId(response.getTransactionId())
@@ -430,6 +449,12 @@ public class AbonnementServiceImpl implements AbonnementService {
                 .statut(com.serviceabonnement.enums.StatutRenouvellement.EN_ATTENTE)
                 .build();
         renouvellementRepository.save(renouvellement);
+
+        eventPublisher.publishRenouvellementEffectue(
+                userClient.getUserById(abonnement.getUserId()),
+                abonnement,
+                "MANUEL"
+        );
 
         return abonnement;
     }
@@ -455,7 +480,7 @@ public class AbonnementServiceImpl implements AbonnementService {
                 .build();
 
         PaymentResponseDTO response = paiementClient.initierPaiement(paymentRequest);
-        
+
         Renouvellement renouvellement = Renouvellement.builder()
                 .abonnement(abonnement)
                 .paiementId(response.getTransactionId())
@@ -465,6 +490,12 @@ public class AbonnementServiceImpl implements AbonnementService {
                 .statut(com.serviceabonnement.enums.StatutRenouvellement.EN_ATTENTE)
                 .build();
         renouvellementRepository.save(renouvellement);
+        
+        eventPublisher.publishRenouvellementEffectue(
+                userClient.getUserById(abonnement.getUserId()),
+                abonnement,
+                "AUTOMATIQUE"
+        );
 
         return abonnement;
     }
@@ -481,8 +512,7 @@ public class AbonnementServiceImpl implements AbonnementService {
                 userClient.getUserById(abonnement.getUserId()),
                 abonnement,
                 0.0, // Pas de remboursement automatique sur annulation admin forcée ici
-                null
-        );
+                null);
     }
 
     @Override
@@ -495,7 +525,7 @@ public class AbonnementServiceImpl implements AbonnementService {
         if (abonnementOpt.isPresent()) {
             Abonnement abonnement = abonnementOpt.get();
 
-            // Bug 3 Fix: Idempotency guard — ignore duplicate webhook
+            // Idempotency guard — ignore duplicate webhook
             if (abonnement.getStatut() == StatutAbonnement.ACTIF) {
                 log.warn("Webhook reçu pour un abonnement déjà actif {}. Ignoré (idempotence).", abonnement.getId());
                 return;
@@ -504,18 +534,16 @@ public class AbonnementServiceImpl implements AbonnementService {
             if ("SUCCESS".equals(callback.getStatus())) {
                 abonnement.setStatut(StatutAbonnement.ACTIF);
                 abonnement.setDateDebut(LocalDateTime.now());
+                abonnement.setDateFin(calculerDateFin(abonnement.getPlan().getDuree()));
 
-                LocalDateTime dateFin = calculerDateFin(abonnement.getPlan().getDuree());
-                abonnement.setDateFin(dateFin);
-
-                // Bug 2 Fix: This runs in its own transaction (REQUIRES_NEW) so a refund
-                // failure for the old plan never rolls back the new plan's activation.
-                // We use self-reference invocation to go through Spring Proxy (transaction interception)
+                // Isolated REQUIRES_NEW transaction — refund failure for old plan
+                // must never roll back the new plan's activation.
                 self.annulerAnciensAbonnementsActifsEnConflit(abonnement);
 
                 log.info("Abonnement {} activé avec succès (Token: {})", abonnement.getId(), token);
                 sendToAnalyse(abonnement, "SOUSCRIPTION_CONFIRMEE", abonnement.getPrixPaye());
-                eventPublisher.publishConfirmationSouscription(userClient.getUserById(abonnement.getUserId()), abonnement);
+                eventPublisher.publishConfirmationSouscription(
+                        userClient.getUserById(abonnement.getUserId()), abonnement);
             } else {
                 abonnement.setStatut(StatutAbonnement.ECHEC_PAIEMENT);
                 log.warn("Le paiement a échoué pour l'abonnement {} : {}", abonnement.getId(), callback.getMessage());
@@ -525,13 +553,13 @@ public class AbonnementServiceImpl implements AbonnementService {
             return;
         }
 
-        // --- Branch 2: Renewal payment (Bug 1 Fix) ---
-        // If no Abonnement is found by the token, it must be a renewal (Renouvellement) payment.
+        // --- Branch 2: Renewal payment ---
+        // Token belongs to a Renouvellement, not a new subscription.
         Renouvellement renouvellement = renouvellementRepository.findByPaiementId(token)
                 .orElseThrow(() -> new AbonnementNotFoundException(
                         "Aucun abonnement ou renouvellement associé au token " + token));
 
-        // Bug 3 Fix: Idempotency guard for renewals
+        // Idempotency guard for renewals
         if (renouvellement.getStatut() == com.serviceabonnement.enums.StatutRenouvellement.SUCCES) {
             log.warn("Webhook reçu pour un renouvellement déjà traité {}. Ignoré (idempotence).", renouvellement.getId());
             return;
@@ -539,9 +567,7 @@ public class AbonnementServiceImpl implements AbonnementService {
 
         Abonnement abonnement = renouvellement.getAbonnement();
         if ("SUCCESS".equals(callback.getStatus())) {
-            // Extend the subscription end date by the plan's duration
             abonnement.setDateFin(calculerDateFin(abonnement.getPlan().getDuree(), abonnement.getDateFin()));
-            // Reactivate subscription if it's not suspended by an admin
             if (abonnement.getStatut() != StatutAbonnement.SUSPENDU) {
                 abonnement.setStatut(StatutAbonnement.ACTIF);
             }
@@ -552,12 +578,11 @@ public class AbonnementServiceImpl implements AbonnementService {
             eventPublisher.publishRenouvellementEffectue(
                     userClient.getUserById(abonnement.getUserId()),
                     abonnement,
-                    renouvellement.getTypeRenouvellement().name()
-            );
+                    renouvellement.getTypeRenouvellement().name());
         } else {
             renouvellement.setStatut(com.serviceabonnement.enums.StatutRenouvellement.ECHOUE);
             renouvellementRepository.save(renouvellement);
-            log.warn("Paiement de renouvellement échoué pour le renouvellement {} : {}", renouvellement.getId(), callback.getMessage());
+            log.warn("Paiement de renouvellement échoué pour {} : {}", renouvellement.getId(), callback.getMessage());
         }
     }
 
@@ -566,8 +591,8 @@ public class AbonnementServiceImpl implements AbonnementService {
     public void confirmerRemboursement(com.serviceabonnement.dto.external.RefundCallbackDTO callback) {
         Abonnement abonnement = abonnementRepository.findByPaiementId(callback.getTransactionId())
                 .orElseGet(() -> abonnementRepository.findByRemboursementId(callback.getTransactionId())
-                .orElseThrow(() -> new AbonnementNotFoundException(
-                        "Aucun abonnement associé à la transaction " + callback.getTransactionId())));
+                        .orElseThrow(() -> new AbonnementNotFoundException(
+                                "Aucun abonnement associé à la transaction " + callback.getTransactionId())));
 
         switch (callback.getStatut()) {
             case "REMBOURSE" -> {
@@ -575,11 +600,13 @@ public class AbonnementServiceImpl implements AbonnementService {
                 abonnement.setDateAnnulation(LocalDateTime.now());
                 log.info("Abonnement {} annulé avec succès (Remboursement effectué)", abonnement.getId());
                 sendToAnalyse(abonnement, "ANNULATION_CONFIRMEE", 0.0);
-                eventPublisher.publishAnnulationEffectuee(userClient.getUserById(abonnement.getUserId()), abonnement, callback.getMontantRembourse(), callback.getTransactionId());
+                eventPublisher.publishAnnulationEffectuee(userClient.getUserById(abonnement.getUserId()), abonnement,
+                        callback.getMontantRembourse(), callback.getTransactionId());
             }
             case "ECHEC_REMBOURSEMENT" -> {
                 abonnement.setStatut(StatutAbonnement.ECHEC_REMBOURSEMENT);
-                log.error("Échec définitif du remboursement pour l'abonnement {} : {}", abonnement.getId(), callback.getMotif());
+                log.error("Échec définitif du remboursement pour l'abonnement {} : {}", abonnement.getId(),
+                        callback.getMotif());
                 // Ici on pourrait notifier un administrateur
             }
             case "EN_COURS" -> {
@@ -587,14 +614,14 @@ public class AbonnementServiceImpl implements AbonnementService {
                 log.info("Remboursement en cours (tentative) pour l'abonnement {}", abonnement.getId());
             }
         }
-        
+
         abonnementRepository.save(abonnement);
     }
 
     @Override
     public com.serviceabonnement.dto.external.ActiveSubscriptionResponseDTO verifierAbonnementActif(Long userId) {
         Abonnement actif = getActif(userId);
-        
+
         if (actif != null) {
             return com.serviceabonnement.dto.external.ActiveSubscriptionResponseDTO.builder()
                     .aUnAbonnementActif(true)
@@ -602,7 +629,7 @@ public class AbonnementServiceImpl implements AbonnementService {
                     .dateExpiration(actif.getDateFin().toLocalDate().toString())
                     .build();
         }
-        
+
         return com.serviceabonnement.dto.external.ActiveSubscriptionResponseDTO.builder()
                 .aUnAbonnementActif(false)
                 .typePlan(null)
@@ -634,14 +661,16 @@ public class AbonnementServiceImpl implements AbonnementService {
                     .build();
 
             analytiqueTraceRepository.save(trace);
-            log.info("Trace d'analyse collectée pour l'utilisateur {} - action: {}", trace.getUserId(), formattedAction);
+            log.info("Trace d'analyse collectée pour l'utilisateur {} - action: {}", trace.getUserId(),
+                    formattedAction);
 
         } catch (Exception e) {
             log.error("Échec de la collecte de la trace d'analyse: {}", e.getMessage());
         }
     }
 
-    private String mapPlanType(com.serviceabonnement.enums.DureeOffre duree, com.serviceabonnement.enums.CategorieAbonnement categorie) {
+    private String mapPlanType(com.serviceabonnement.enums.DureeOffre duree,
+            com.serviceabonnement.enums.CategorieAbonnement categorie) {
         String d = switch (duree) {
             case HEBDOMADAIRE -> "WEEKLY";
             case MENSUEL -> "MONTHLY";
@@ -770,17 +799,18 @@ public class AbonnementServiceImpl implements AbonnementService {
         }
         log.error("Fallback souscrire pour l'utilisateur {} - Plan {}. Raison: {}", userId, planId, t.getMessage());
         throw new com.serviceabonnement.exception.ExternalServiceException(
-            "Le service de souscription est momentanément indisponible. Veuillez réessayer plus tard.");
+                "Le service de souscription est momentanément indisponible. Veuillez réessayer plus tard.");
     }
 
     public void annulationFallback(Long abonnementId, Throwable t) {
         log.error("Fallback annulation pour l'abonnement {}. Raison: {}", abonnementId, t.getMessage());
         throw new com.serviceabonnement.exception.ExternalServiceException(
-            "Le service d'annulation est momentanément indisponible. Veuillez réessayer plus tard.");
+            "Le service d'annulation est momentanément indisponible. Votre demande a été enregistrée mais le remboursement sera traité ultérieurement.");
     }
 
     private String getRandomPaymentMethod() {
-        return java.util.Random.class.getName().equals("java.util.Random") ? 
-            (new java.util.Random().nextBoolean() ? "CARD" : "MOBILE_MONEY") : "CARD";
+        return java.util.Random.class.getName().equals("java.util.Random")
+                ? (new java.util.Random().nextBoolean() ? "CARD" : "MOBILE_MONEY")
+                : "CARD";
     }
 }

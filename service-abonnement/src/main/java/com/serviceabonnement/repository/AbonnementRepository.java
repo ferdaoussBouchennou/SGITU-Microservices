@@ -13,8 +13,14 @@ import java.util.Optional;
 @Repository
 public interface AbonnementRepository extends JpaRepository<Abonnement, Long> {
     List<Abonnement> findByUserId(Long userId);
+
+    List<Abonnement> findByStatut(StatutAbonnement statut);
+
     Page<Abonnement> findByUserId(Long userId, Pageable pageable);
+
     List<Abonnement> findByUserIdAndStatut(Long userId, StatutAbonnement statut);
+
     Optional<Abonnement> findByPaiementId(String paiementId);
+
     Optional<Abonnement> findByRemboursementId(String remboursementId);
 }
