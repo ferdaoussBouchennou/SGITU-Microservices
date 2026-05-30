@@ -1,6 +1,7 @@
 package com.g7suivivehicules.exception;
 
-import jakarta.persistence.EntityNotFoundException;
+import com.g7suivivehicules.exception.BusinessException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -14,6 +15,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 @RestControllerAdvice
+@Slf4j
 public class GlobalExceptionHandler {
 
     // 400 - Champ obligatoire manquant / Validation DTO
@@ -45,9 +47,9 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
     }
 
-    // 404 - Véhicule introuvable / Alerte inexistante
-    @ExceptionHandler(EntityNotFoundException.class)
-    public ResponseEntity<Map<String, Object>> handleEntityNotFound(EntityNotFoundException ex) {
+    // 404 - Ressource métier introuvable (VehiculeNotFoundException, AlertNotFoundException, etc.)
+    @ExceptionHandler(BusinessException.class)
+    public ResponseEntity<Map<String, Object>> handleBusinessException(BusinessException ex) {
         Map<String, Object> response = new HashMap<>();
         response.put("timestamp", LocalDateTime.now());
         response.put("status", 404);
@@ -68,14 +70,27 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
     }
 
-    // 500 - Erreur interne non gérée
+    // 404 - Ressource ou URL non trouvée (Spring Boot 3)
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResourceFound(org.springframework.web.servlet.resource.NoResourceFoundException ex) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("timestamp", LocalDateTime.now());
+        response.put("status", 404);
+        response.put("error", "Not Found");
+        response.put("message", "La ressource ou l'endpoint demandé n'existe pas : " + ex.getResourcePath());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+    }
+
+    // 500 - Erreur interne non gérée (Sécurisée)
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleAllUncaughtException(Exception ex) {
+        log.error("Exception interne non gérée : ", ex);
+
         Map<String, Object> response = new HashMap<>();
         response.put("timestamp", LocalDateTime.now());
         response.put("status", 500);
         response.put("error", "Internal Server Error");
-        response.put("message", "Erreur interne du serveur : " + ex.getMessage());
+        response.put("message", "Une erreur interne est survenue sur le serveur.");
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
     }
 }

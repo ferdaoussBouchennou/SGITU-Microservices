@@ -38,8 +38,8 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.PUT, "/api/suivi-vehicules/alerts/**").hasAnyAuthority("ROLE_OPERATOR", "ROLE_ADMIN_G7")
                 .requestMatchers(HttpMethod.PATCH, "/api/suivi-vehicules/alerts/**").hasAnyAuthority("ROLE_OPERATOR", "ROLE_ADMIN_G7")
                 
-                // Consultation (Admin G7 et Operateur)
-                .requestMatchers(HttpMethod.GET, "/api/suivi-vehicules/**").hasAnyAuthority("ROLE_ADMIN_G7", "ROLE_OPERATOR")
+                // Consultation (Admin G7, Operateur et Technicien)
+                .requestMatchers(HttpMethod.GET, "/api/suivi-vehicules/**").hasAnyAuthority("ROLE_ADMIN_G7", "ROLE_OPERATOR", "ROLE_TECHNICIAN")
                 
                 // Tout le reste authentifié
                 .anyRequest().authenticated()

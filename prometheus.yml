@@ -33,8 +33,12 @@ scrape_configs:
   # ---------------------------------------------------------------
 
   # ---------------------------------------------------------------
-  #  G7 — (ajoutez votre bloc ici)
+  #  G7 — Service Suivi des Véhicules (SGITU)
   # ---------------------------------------------------------------
+  - job_name: 'service-suivi-vehicule'
+    static_configs:
+      - targets: ['g7-service:8087']
+    metrics_path: '/actuator/prometheus'
   
 
   # ---------------------------------------------------------------

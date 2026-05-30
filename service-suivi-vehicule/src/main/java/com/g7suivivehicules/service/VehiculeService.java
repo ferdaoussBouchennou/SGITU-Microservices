@@ -3,8 +3,8 @@ package com.g7suivivehicules.service;
 import com.g7suivivehicules.dto.VehiculeRequest;
 import com.g7suivivehicules.dto.VehiculeResponse;
 import com.g7suivivehicules.entity.Vehicule;
+import com.g7suivivehicules.exception.VehiculeNotFoundException;
 import jakarta.persistence.EntityNotFoundException;
-import com.g7suivivehicules.entity.Vehicule;
 import com.g7suivivehicules.repository.VehiculeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,7 +25,7 @@ public class VehiculeService {
     @Transactional
     public VehiculeResponse createVehicule(VehiculeRequest request) {
         log.info("Creation d'un nouveau vehicule: {}", request.getImmatriculation());
-        
+
         Vehicule vehicule = Vehicule.builder()
                 .immatriculation(request.getImmatriculation())
                 .type(request.getType())
@@ -48,13 +48,13 @@ public class VehiculeService {
     public VehiculeResponse getVehiculeById(UUID id) {
         return vehiculeRepository.findById(id)
                 .map(this::mapToResponse)
-                .orElseThrow(() -> new EntityNotFoundException("Véhicule introuvable avec l'ID : " + id));
+                .orElseThrow(() -> new VehiculeNotFoundException(id));
     }
 
     @Transactional
     public VehiculeResponse updateVehicule(UUID id, VehiculeRequest request) {
         Vehicule vehicule = vehiculeRepository.findById(id)
-                .orElseThrow(() -> new EntityNotFoundException("Véhicule introuvable avec l'ID : " + id));
+                .orElseThrow(() -> new VehiculeNotFoundException(id));
 
         vehicule.setImmatriculation(request.getImmatriculation());
         vehicule.setType(request.getType());
@@ -67,7 +67,7 @@ public class VehiculeService {
     @Transactional
     public void deleteVehicule(UUID id) {
         Vehicule vehicule = vehiculeRepository.findById(id)
-                .orElseThrow(() -> new EntityNotFoundException("Véhicule introuvable avec l'ID : " + id));
+                .orElseThrow(() -> new VehiculeNotFoundException(id));
         vehicule.setStatut(Vehicule.StatutVehicule.HORS_SERVICE);
         vehiculeRepository.save(vehicule);
     }
@@ -93,7 +93,7 @@ public class VehiculeService {
     @Transactional
     public VehiculeResponse updateStatut(UUID id, Vehicule.StatutVehicule statut) {
         Vehicule vehicule = vehiculeRepository.findById(id)
-                .orElseThrow(() -> new EntityNotFoundException("Véhicule introuvable avec l'ID : " + id));
+                .orElseThrow(() -> new VehiculeNotFoundException(id));
         vehicule.setStatut(statut);
         return mapToResponse(vehiculeRepository.save(vehicule));
     }

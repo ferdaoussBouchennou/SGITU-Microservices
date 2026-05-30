@@ -21,6 +21,8 @@ import org.modelmapper.ModelMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -78,12 +80,13 @@ public class IncidentServiceImpl implements IncidentService {
 
         Incident incident = trouverIncidentOuErreur(id);
 
-        // L'affectation ne peut se faire que depuis ANALYSE ou ESCALADE
-        if (incident.getStatut() != StatutIncident.ANALYSE &&
-                incident.getStatut() != StatutIncident.ESCALADE) {
+        verifierLockoutEscalade(incident);
+
+        // L'affectation ne peut se faire que depuis ANALYSE ou si l'incident est escaladé
+        if (incident.getStatut() != StatutIncident.ANALYSE && !incident.isEscalade()) {
             throw new IllegalStateTransitionException(
                     String.format("Impossible d'affecter un responsable : l'incident %s est en statut %s. " +
-                            "Le statut doit être ANALYSE ou ESCALADE.", incident.getReference(), incident.getStatut()));
+                            "Le statut doit être ANALYSE.", incident.getReference(), incident.getStatut()));
         }
 
         StatutIncident ancienStatut = incident.getStatut();
@@ -107,9 +110,54 @@ public class IncidentServiceImpl implements IncidentService {
 
         incidentRepository.save(incident);
         log.info("Incident {} assigné au responsable {} — Statut: ASSIGNE", incident.getReference(), responsableId);
+        
+        // Notifier l'agent (G5) selon le contrat
+        notificationService.envoyerAssignation(incident);
 
         // Déclencher G5 (Notification) — changement de statut
         notificationService.envoyerChangementStatut(incident, ancienStatut.name());
+    }
+
+    @Override
+    public void ajouterRenfort(Long incidentId, Long agentId, Long auteurId) {
+        log.info("Ajout du renfort {} à l'incident {} par {}", agentId, incidentId, auteurId);
+
+        Incident incident = trouverIncidentOuErreur(incidentId);
+
+        verifierLockoutEscalade(incident);
+
+        // L'ajout de renforts ne peut se faire que sur un incident en cours
+        if (incident.getStatut() != StatutIncident.ASSIGNE &&
+                incident.getStatut() != StatutIncident.EN_TRAITEMENT) {
+            throw new IllegalStateTransitionException(
+                    String.format("Impossible d'ajouter un renfort : l'incident %s est en statut %s.",
+                            incident.getReference(), incident.getStatut()));
+        }
+
+        com.sgitu.servicegestionincidents.model.entity.Renfort renfort = com.sgitu.servicegestionincidents.model.entity.Renfort.builder()
+                .agentId(agentId)
+                .auteurAffectationId(auteurId)
+                .dateAffectation(LocalDateTime.now())
+                .build();
+        
+        incident.addRenfort(renfort);
+
+        // Enregistrer l'action dans l'historique
+        Action action = Action.builder()
+                .type(TypeAction.ASSIGNATION)
+                .description(String.format("Renfort ajouté (agent %d)", agentId))
+                .auteurId(auteurId)
+                .dateAction(LocalDateTime.now())
+                .ancienStatut(incident.getStatut())
+                .nouveauStatut(incident.getStatut())
+                .build();
+        incident.addAction(action);
+
+        incidentRepository.save(incident);
+        log.info("Renfort {} ajouté à l'incident {}", agentId, incident.getReference());
+
+        // Notifier le renfort spécifiquement
+        notificationService.envoyerAssignationRenfort(incident, agentId);
     }
 
     // ============================================================
@@ -121,6 +169,7 @@ public class IncidentServiceImpl implements IncidentService {
         log.info("Mise à jour du statut de l'incident {} vers {} par {}", id, nouveauStatut, auteurId);
 
         Incident incident = trouverIncidentOuErreur(id);
+        verifierLockoutEscalade(incident);
         StatutIncident ancienStatut = incident.getStatut();
 
         // Vérifier les transitions autorisées
@@ -147,7 +196,7 @@ public class IncidentServiceImpl implements IncidentService {
         incidentRepository.save(incident);
         log.info("Incident {} — Statut mis à jour: {} → {}", incident.getReference(), ancienStatut, nouveauStatut);
 
-        // Déclencher G4 (Transport) — CONFIRME dès que le Superviseur confirme l'incident
+        // Déclencher G4 (Transport) — CONFIRME dès que le Dispatcher confirme l'incident
         if (nouveauStatut == StatutIncident.ANALYSE) {
             envoyerEvenementTransport(incident, "CONFIRME");
             incident.setTransportNotifie(true);
@@ -173,6 +222,11 @@ public class IncidentServiceImpl implements IncidentService {
 
         Incident incident = trouverIncidentOuErreur(id);
 
+        // Seuls les superviseurs et les dispatchers peuvent confirmer/valider l'escalade
+        if (!isSupervisor() && !isDispatcher()) {
+            throw new AccessDeniedException("Accès refusé : seuls les superviseurs et les dispatchers peuvent escalader cet incident.");
+        }
+
         if (!incident.isEscaladable()) {
             throw new IllegalStateTransitionException(
                     String.format("Impossible d'escalader l'incident %s en statut %s. " +
@@ -181,8 +235,13 @@ public class IncidentServiceImpl implements IncidentService {
         }
 
         StatutIncident ancienStatut = incident.getStatut();
-        incident.setStatut(StatutIncident.ESCALADE);
+        incident.setEscalade(true);
         incident.setGravite(NiveauGravite.CRITIQUE);
+        incident.setMotifEscalade(motif);
+        
+        // Nettoyer la demande d'escalade en cours si elle existait
+        incident.setDemandeEscalade(false);
+        incident.setMotifDemandeEscalade(null);
 
         // Enregistrer l'escalade dans l'historique
         Action action = Action.builder()
@@ -191,15 +250,82 @@ public class IncidentServiceImpl implements IncidentService {
                 .auteurId(auteurId)
                 .dateAction(LocalDateTime.now())
                 .ancienStatut(ancienStatut)
-                .nouveauStatut(StatutIncident.ESCALADE)
+                .nouveauStatut(ancienStatut)
                 .build();
         incident.addAction(action);
 
         incidentRepository.save(incident);
-        log.info("Incident {} escaladé — Gravité: CRITIQUE, Statut: ESCALADE", incident.getReference());
+        log.info("Incident {} escaladé — Gravité: CRITIQUE, escalade: true, motif: {}", incident.getReference(), motif);
 
         // Déclencher G5 (Notification) — alerte rouge vers la direction
         notificationService.envoyerEscalade(incident, motif);
+
+        // Déclencher G4 (Transport) — notification d'escalade
+        envoyerEvenementTransport(incident, "ESCALADE");
+    }
+
+    @Override
+    public void demanderEscalade(Long id, String motif, Long auteurId) {
+        log.info("Demande d'escalade soumise pour l'incident {} — Motif: {} par {}", id, motif, auteurId);
+
+        Incident incident = trouverIncidentOuErreur(id);
+
+        // Seul le technicien responsable actuellement assigné peut faire la demande
+        if (incident.getResponsableId() == null || !incident.getResponsableId().equals(auteurId)) {
+            throw new AccessDeniedException("Accès refusé : vous n'êtes pas le technicien assigné à cet incident.");
+        }
+
+        if (incident.isEscalade()) {
+            throw new IllegalStateTransitionException("Impossible de demander l'escalade : l'incident est déjà escaladé.");
+        }
+
+        incident.setDemandeEscalade(true);
+        incident.setMotifDemandeEscalade(motif);
+
+        Action action = Action.builder()
+                .type(TypeAction.DEMANDE_ESCALADE)
+                .description(String.format("Demande d'escalade soumise par le responsable terrain — Motif: %s", motif))
+                .auteurId(auteurId)
+                .dateAction(LocalDateTime.now())
+                .ancienStatut(incident.getStatut())
+                .nouveauStatut(incident.getStatut())
+                .build();
+        incident.addAction(action);
+
+        incidentRepository.save(incident);
+        log.info("Demande d'escalade soumise avec succès pour l'incident : {}", incident.getReference());
+    }
+
+    @Override
+    public void refuserEscalade(Long id, String motifRefus, Long auteurId) {
+        log.info("Refus d'escalade pour l'incident {} — Motif de refus: {} par {}", id, motifRefus, auteurId);
+
+        Incident incident = trouverIncidentOuErreur(id);
+
+        // Seuls les superviseurs et les dispatchers peuvent refuser
+        if (!isSupervisor() && !isDispatcher()) {
+            throw new AccessDeniedException("Accès refusé : seuls les superviseurs et les dispatchers peuvent refuser une escalade.");
+        }
+
+        if (!incident.isDemandeEscalade()) {
+            throw new IllegalStateTransitionException("Impossible de refuser l'escalade : aucune demande d'escalade en cours.");
+        }
+
+        incident.setDemandeEscalade(false);
+        incident.setMotifDemandeEscalade(null);
+
+        Action action = Action.builder()
+                .type(TypeAction.REFUS_ESCALADE)
+                .description(String.format("Demande d'escalade refusée par l'exploitation — Motif de refus: %s", motifRefus))
+                .auteurId(auteurId)
+                .dateAction(LocalDateTime.now())
+                .ancienStatut(incident.getStatut())
+                .nouveauStatut(incident.getStatut())
+                .build();
+        incident.addAction(action);
+
+        incidentRepository.save(incident);
+        log.info("Refus d'escalade enregistré pour l'incident : {}", incident.getReference());
     }
 
     // ============================================================
@@ -211,6 +337,7 @@ public class IncidentServiceImpl implements IncidentService {
         log.info("Clôture de l'incident {} — Motif: {} par {}", id, motif, auteurId);
 
         Incident incident = trouverIncidentOuErreur(id);
+        verifierLockoutEscalade(incident);
 
         if (!incident.isCloturable()) {
             throw new IllegalStateTransitionException(
@@ -220,6 +347,7 @@ public class IncidentServiceImpl implements IncidentService {
 
         StatutIncident ancienStatut = incident.getStatut();
         incident.setStatut(StatutIncident.CLOTURE);
+        incident.setMotifCloture(motif);
 
         // Enregistrer la clôture dans l'historique
         Action action = Action.builder()
@@ -251,6 +379,7 @@ public class IncidentServiceImpl implements IncidentService {
         log.info("Annulation de l'incident {} — Motif: {} par {}", id, motif, auteurId);
 
         Incident incident = trouverIncidentOuErreur(id);
+        verifierLockoutEscalade(incident);
 
         if (!incident.isAnnulable()) {
             throw new IllegalStateTransitionException(
@@ -261,6 +390,7 @@ public class IncidentServiceImpl implements IncidentService {
 
         StatutIncident ancienStatut = incident.getStatut();
         incident.setStatut(StatutIncident.ANNULE);
+        incident.setMotifAnnulation(motif);
 
         // Enregistrer l'annulation dans l'historique
         Action action = Action.builder()
@@ -297,6 +427,7 @@ public class IncidentServiceImpl implements IncidentService {
     public IncidentResponseDTO consulterIncident(Long id) {
         log.info("Consultation de l'incident {}", id);
         Incident incident = trouverIncidentOuErreur(id);
+        verifierLockoutEscalade(incident);
         return mapToIncidentResponseDTO(incident);
     }
 
@@ -308,6 +439,7 @@ public class IncidentServiceImpl implements IncidentService {
     public List<ActionDTO> consulterSuivi(Long incidentId) {
         log.info("Consultation du suivi de l'incident {}", incidentId);
         Incident incident = trouverIncidentOuErreur(incidentId);
+        verifierLockoutEscalade(incident);
 
         return incident.getActions().stream()
                 .map(action -> modelMapper.map(action, ActionDTO.class))
@@ -341,7 +473,14 @@ public class IncidentServiceImpl implements IncidentService {
             incidents = incidentRepository.findAll();
         }
 
-        return incidents.stream()
+        boolean isDisp = isDispatcher();
+        boolean isSuper = isSupervisor();
+        java.util.stream.Stream<Incident> stream = incidents.stream();
+        if (isDisp && !isSuper) {
+            stream = stream.filter(i -> !i.isEscalade());
+        }
+
+        return stream
                 .map(this::mapToIncidentResponseDTO)
                 .collect(Collectors.toList());
     }
@@ -486,6 +625,8 @@ public class IncidentServiceImpl implements IncidentService {
 
         // Notification G5 — confirmation au déclarant
         notificationService.envoyerConfirmation(saved);
+        // Alerte aux dispatchers
+        notificationService.envoyerAlerteDispatchers(saved);
 
         return SignalementResponseDTO.builder()
                 .incidentId(saved.getId())
@@ -566,6 +707,33 @@ public class IncidentServiceImpl implements IncidentService {
         log.info("Événement G8 envoyé — Incident: {}, Statut: {}", incident.getReference(), incident.getStatut());
     }
 
+    private void verifierLockoutEscalade(Incident incident) {
+        if (incident.isEscalade() && isDispatcher() && !isSupervisor()) {
+            throw new AccessDeniedException("Accès refusé : cet incident a été escaladé et est réservé aux superviseurs.");
+        }
+    }
+
+    private boolean isSupervisor() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        return auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_SUPERVISOR"));
+    }
+
+    private boolean isDispatcher() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        return auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_DISPATCHER"));
+    }
+
+    private boolean isTechnician() {
+        var auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        return auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_TECHNICIAN"));
+    }
+
     /**
      * Recherche un incident par ID ou lève une exception 404.
      */
@@ -599,6 +767,76 @@ public class IncidentServiceImpl implements IncidentService {
                 .latitude(incident.getLocalisation() != null ? incident.getLocalisation().getLatitude() : null)
                 .longitude(incident.getLocalisation() != null ? incident.getLocalisation().getLongitude() : null)
                 .incidentParentRef(incident.getIncidentParentRef())
+                .escalade(incident.isEscalade())
+                .motifEscalade(incident.getMotifEscalade())
+                .demandeEscalade(incident.isDemandeEscalade())
+                .motifDemandeEscalade(incident.getMotifDemandeEscalade())
                 .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<IncidentResponseDTO> obtenirTousLesIncidents() {
+        log.info("Récupération de tous les incidents (Superviseur)");
+        return incidentRepository.findAll().stream()
+                .map(this::mapToIncidentResponseDTO)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<IncidentResponseDTO> obtenirIncidentsNonEscalades() {
+        log.info("Récupération des incidents non escaladés");
+        return incidentRepository.findByEscalade(false).stream()
+                .map(this::mapToIncidentResponseDTO)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<IncidentResponseDTO> obtenirIncidentsEscalades() {
+        log.info("Récupération des incidents escaladés");
+        return incidentRepository.findByEscalade(true).stream()
+                .map(this::mapToIncidentResponseDTO)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<IncidentResponseDTO> obtenirIncidentsAffectes(Long userId) {
+        log.info("Récupération des incidents affectés à l'utilisateur : {}", userId);
+        return incidentRepository.trouverIncidentsAffectes(userId).stream()
+                .map(this::mapToIncidentResponseDTO)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<IncidentResponseDTO> obtenirDemandesEscalades() {
+        log.info("Récupération des incidents avec demande d'escalade en attente");
+        return incidentRepository.findByDemandeEscalade(true).stream()
+                .map(this::mapToIncidentResponseDTO)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<IncidentResponseDTO> obtenirMesSignalements(Long userId) {
+        log.info("Récupération des incidents signalés par l'utilisateur : {}", userId);
+        return incidentRepository.findByDeclarantId(userId).stream()
+                .map(this::mapToIncidentResponseDTO)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<RenfortDTO> obtenirRenforts(Long incidentId) {
+        log.info("Récupération des renforts pour l'incident {}", incidentId);
+        Incident incident = trouverIncidentOuErreur(incidentId);
+        verifierLockoutEscalade(incident);
+
+        return incident.getRenforts().stream()
+                .map(renfort -> modelMapper.map(renfort, RenfortDTO.class))
+                .collect(Collectors.toList());
     }
 }

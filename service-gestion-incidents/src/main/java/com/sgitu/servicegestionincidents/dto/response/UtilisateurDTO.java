@@ -5,15 +5,29 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 public class UtilisateurDTO {
     private Long id;
-    private String nom;
-    private String prenom;
     private String email;
-    private String telephone;
-    private String role;
+    private Boolean active;
+    private List<String> roles;
+    private Profile profile;
+    private String createdAt;
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class Profile {
+        private String firstName;
+        private String lastName;
+        private String phone;
+        private String address;
+        private String birthDate;
+    }
 }

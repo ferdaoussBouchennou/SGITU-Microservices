@@ -61,8 +61,28 @@ public interface IncidentRepository extends JpaRepository<Incident, Long>, JpaSp
                         @Param("lng") Double longitude,
                         @Param("radiusMeters") Double radiusMeters);
 
+        List<Incident> findByStatutAndEscaladeFalseAndDateSignalementBefore(StatutIncident statut, LocalDateTime time);
+
+        /**
+         * Trouver les incidents signalés depuis une date donnée (pour le filtrage par période).
+         */
+        List<Incident> findByDateSignalementAfter(LocalDateTime depuis);
+
+        List<Incident> findByEscalade(boolean escalade);
+
         /**
          * Filtrage par statut et déclarant combinés.
          */
         List<Incident> findByStatutAndDeclarantId(StatutIncident statut, Long declarantId);
+
+        /**
+         * Trouver les incidents affectés à un agent (en tant que responsable ou renfort).
+         */
+        @Query("SELECT DISTINCT i FROM Incident i LEFT JOIN i.renforts r WHERE i.responsableId = :userId OR r.agentId = :userId")
+        List<Incident> trouverIncidentsAffectes(@Param("userId") Long userId);
+
+        /**
+         * Trouver les incidents ayant une demande d'escalade en attente.
+         */
+        List<Incident> findByDemandeEscalade(boolean demandeEscalade);
 }

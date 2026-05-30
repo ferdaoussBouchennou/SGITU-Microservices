@@ -87,6 +87,22 @@ public class AlertController {
         return ResponseEntity.ok(responses);
     }
 
+    @GetMapping("/snapshot")
+    @Operation(
+            summary = "Snapshot des alertes actives",
+            description = "Retourne toutes les alertes ACTUELLEMENT actives (statut OUVERTE) à l'instant T."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Snapshot des alertes actives retourné")
+    })
+    public ResponseEntity<List<AlertResponseDTO>> obtenirAlertesSnapshot() {
+        List<AlertResponseDTO> responses = alertService.listerActives()
+                .stream()
+                .map(AlertResponseDTO::fromEntity)
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(responses);
+    }
+
     @GetMapping("/vehicule/{vehiculeId}")
     @Operation(
             summary = "Historique des alertes d'un véhicule",

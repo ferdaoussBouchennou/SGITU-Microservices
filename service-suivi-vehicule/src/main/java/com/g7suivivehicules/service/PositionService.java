@@ -3,7 +3,7 @@ package com.g7suivivehicules.service;
 import com.g7suivivehicules.dto.PositionGPSRequest;
 import com.g7suivivehicules.dto.PositionGPSResponse;
 import com.g7suivivehicules.entity.PositionGPS;
-import jakarta.persistence.EntityNotFoundException;
+import com.g7suivivehicules.exception.PositionNotFoundException;
 import com.g7suivivehicules.repository.PositionGPSRepository;
 import com.g7suivivehicules.repository.VehiculeRepository;
 import lombok.RequiredArgsConstructor;
@@ -72,7 +72,7 @@ public class PositionService {
         public PositionGPSResponse getPositionActuelle(UUID vehiculeId) {
                 PositionGPS position = positionRepository
                                 .findTopByVehiculeIdOrderByTimestampDesc(vehiculeId)
-                                .orElseThrow(() -> new EntityNotFoundException("Aucune position trouvée pour ce véhicule"));
+                                .orElseThrow(() -> new PositionNotFoundException(vehiculeId));
                 return toResponse(position);
         }
 
@@ -110,7 +110,7 @@ public class PositionService {
         public Long calculerRetard(UUID vehiculeId) {
                 PositionGPS derniere = positionRepository
                                 .findTopByVehiculeIdOrderByTimestampDesc(vehiculeId)
-                                .orElseThrow(() -> new EntityNotFoundException("Aucune position trouvée pour ce véhicule"));
+                                .orElseThrow(() -> new PositionNotFoundException(vehiculeId));
 
                 // Retard en secondes depuis derniere position
                 long retard = java.time.Duration.between(

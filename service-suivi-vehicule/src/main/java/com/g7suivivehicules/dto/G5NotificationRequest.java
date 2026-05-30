@@ -28,8 +28,9 @@ public class G5NotificationRequest {
     @Schema(description = "Type d'événement (RACINE)", example = "VEHICULE_ALERTE_CONDUCTEUR")
     private String eventType;
 
+    @Builder.Default
     @Schema(description = "Canal de diffusion", example = "PUSH")
-    private final String channel = "PUSH";
+    private String channel = "PUSH";
 
     @Schema(description = "Niveau de priorité", example = "HIGH", allowableValues = {"HIGH", "NORMAL", "LOW"})
     private String priority;

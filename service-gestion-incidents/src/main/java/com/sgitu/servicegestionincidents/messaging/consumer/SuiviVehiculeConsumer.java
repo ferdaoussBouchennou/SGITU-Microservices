@@ -97,8 +97,8 @@ public class SuiviVehiculeConsumer {
             log.info("Incident créé automatiquement: {} — Type: {}, Gravité: {}",
                     saved.getReference(), saved.getType(), saved.getGravite());
 
-            // Notification prioritaire au superviseur via G5
-            notificationService.envoyerAlerteIoT(saved);
+            // Notification prioritaire au dispatcher via G5
+            notificationService.envoyerAlerteDispatchers(saved);
 
         } catch (Exception e) {
             log.error("Erreur lors du traitement de l'événement IoT: {}", e.getMessage(), e);

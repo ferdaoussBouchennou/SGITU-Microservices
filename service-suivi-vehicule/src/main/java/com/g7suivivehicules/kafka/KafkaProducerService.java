@@ -5,6 +5,8 @@ import com.g7suivivehicules.dto.G4PositionEventDTO;
 import com.g7suivivehicules.dto.G8VehiculeStatusDTO;
 import com.g7suivivehicules.dto.G9IncidentEventDTO;
 import com.g7suivivehicules.entity.Alert;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,6 +44,8 @@ public class KafkaProducerService {
         }
     }
 
+    @CircuitBreaker(name = "kafkaProducer", fallbackMethod = "envoyerPositionG4Fallback")
+    @Retry(name = "kafkaProducer")
     public void envoyerPositionG4(com.g7suivivehicules.entity.PositionGPS position, String ligneId) {
         G4PositionEventDTO dtoG4 = G4PositionEventDTO.builder()
                 .vehiculeId(position.getVehiculeId().toString())
@@ -49,16 +53,27 @@ public class KafkaProducerService {
                 .lat(position.getLatitude())
                 .longitude(position.getLongitude())
                 .vitesse(position.getVitesse())
-                .timestamp(position.getTimestamp().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME))
+                .timestamp(position.getTimestamp().format(DateTimeFormatter.ISO_DATE_TIME))
                 .build();
 
         kafkaTemplate.send(topicPositionG4, position.getVehiculeId().toString(), dtoG4);
         log.info("[KafkaProducer] Position G4 publiée : {}", dtoG4);
     }
 
+    private void envoyerPositionG4Fallback(com.g7suivivehicules.entity.PositionGPS position, String ligneId, Exception e) {
+        log.warn("[KafkaProducer] Circuit breaker activé - Position non envoyée pour véhicule {}", position.getVehiculeId());
+        // Optionnel: stocker la position localement pour envoi ultérieur
+    }
+
+    @CircuitBreaker(name = "kafkaProducer", fallbackMethod = "envoyerStatusG8Fallback")
+    @Retry(name = "kafkaProducer")
     public void envoyerStatusG8(G8VehiculeStatusDTO status) {
         kafkaTemplate.send(topicG8, status.getVehicleId(), status);
         log.info("[KafkaProducer] Statut G8 publié : {}", status);
+    }
+
+    private void envoyerStatusG8Fallback(G8VehiculeStatusDTO status, Exception e) {
+        log.warn("[KafkaProducer] Circuit breaker activé - Statut non envoyé pour véhicule {}", status.getVehicleId());
     }
 
     public void envoyerStatusG8(java.util.List<G8VehiculeStatusDTO> statuses) {
@@ -67,6 +82,8 @@ public class KafkaProducerService {
         }
     }
 
+    @CircuitBreaker(name = "kafkaProducer", fallbackMethod = "publierVersG4Fallback")
+    @Retry(name = "kafkaProducer")
     private void publierVersG4(Alert alert) {
         String typeG4;
         switch (alert.getTypeAlert()) {
@@ -103,6 +120,12 @@ public class KafkaProducerService {
         }
     }
 
+    private void publierVersG4Fallback(Alert alert, Exception e) {
+        log.warn("[KafkaProducer] Circuit breaker activé - Anomalie non envoyée pour véhicule {}", alert.getVehiculeId());
+    }
+
+    @CircuitBreaker(name = "kafkaProducer", fallbackMethod = "publierVersG9Fallback")
+    @Retry(name = "kafkaProducer")
     private void publierVersG9(Alert alert) {
         String typeG9;
         switch (alert.getTypeAlert()) {
@@ -157,5 +180,9 @@ public class KafkaProducerService {
         } catch (Exception e) {
             log.error("[KafkaProducer] Échec de publication G9 (Kafka absent?) : {}", e.getMessage());
         }
+    }
+
+    private void publierVersG9Fallback(Alert alert, Exception e) {
+        log.warn("[KafkaProducer] Circuit breaker activé - Incident non envoyé pour véhicule {}", alert.getVehiculeId());
     }
 }

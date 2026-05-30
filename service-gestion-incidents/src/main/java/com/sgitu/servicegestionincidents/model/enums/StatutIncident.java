@@ -7,6 +7,5 @@ public enum StatutIncident {
     EN_TRAITEMENT,
     RESOLU,
     CLOTURE,
-    ESCALADE,
     ANNULE
 }

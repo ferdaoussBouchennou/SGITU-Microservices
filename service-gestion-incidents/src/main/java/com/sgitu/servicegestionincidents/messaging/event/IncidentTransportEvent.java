@@ -17,7 +17,7 @@ public class IncidentTransportEvent implements Serializable {
     private String referenceIncident;
     
     private String type;            // PANNE_VEHICULE, ACCIDENT, etc.
-    private String statut;          // CONFIRME, RESOLU, REJETE
+    private String statut;          // CONFIRME, RESOLU, REJETE, ESCALADE
     
     private String vehiculeId;
     private String ligneId;

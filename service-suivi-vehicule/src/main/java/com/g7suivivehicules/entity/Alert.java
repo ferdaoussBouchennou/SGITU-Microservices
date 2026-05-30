@@ -96,7 +96,7 @@ public class Alert {
         RESOLUE,    // anomalie disparue (résolution automatique)
         ANNULEE     // fausse alerte, annulée manuellement par l'opérateur
     }
-
+// severite enum
     public enum Severite {
         FAIBLE,
         MOYENNE,
