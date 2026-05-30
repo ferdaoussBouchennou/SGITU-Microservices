@@ -86,7 +86,10 @@ services:
   #  G3 — Service Utilisateur (port 8083)
   # ---------------------------------------------------------------
   user-service:
-    image: i5m4il/sgitu-user-service:1.0
+    build:
+      context: ./service-utilisateur
+      dockerfile: Dockerfile
+    image: g3-user-service:1.0
     container_name: g3-user-service
     ports:
       - "8083:8083"
@@ -222,6 +225,7 @@ services:
     depends_on:
       #- abonnement-service
       - g7-service
+      - user-service
 
   grafana:
     image: grafana/grafana:latest

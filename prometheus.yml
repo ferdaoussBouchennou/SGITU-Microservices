@@ -16,9 +16,12 @@ scrape_configs:
     metrics_path: '/actuator/prometheus'
 
   # ---------------------------------------------------------------
-  #  G3 — (ajoutez votre bloc ici)
+  #  G3 — Service Utilisateur (SGITU)
   # ---------------------------------------------------------------
-
+  - job_name: 'g3-user-service'
+    static_configs:
+      - targets: ['g3-user-service:8083']
+    metrics_path: '/api/actuator/prometheus'
 
   # ---------------------------------------------------------------
   #  G4 — (ajoutez votre bloc ici)
