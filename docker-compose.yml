@@ -197,8 +197,7 @@ services:
       - g4-db-network
 
   # ---------------------------------------------------------------
-  #  G5 — Notifications (port 8085) — à ajouter par le groupe G5
-  #  G4 consomme G5 via SGITU_G5_URL (hostname attendu : notification-service)
+  #  G5 — (ajoutez votre service ici)
   # ---------------------------------------------------------------
 
   # ---------------------------------------------------------------
