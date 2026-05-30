@@ -196,13 +196,6 @@ public class IncidentServiceImpl implements IncidentService {
         incidentRepository.save(incident);
         log.info("Incident {} — Statut mis à jour: {} → {}", incident.getReference(), ancienStatut, nouveauStatut);
 
-        // Déclencher G4 (Transport) — CONFIRME dès que le Dispatcher confirme l'incident
-        if (nouveauStatut == StatutIncident.ANALYSE) {
-            envoyerEvenementTransport(incident, "CONFIRME");
-            incident.setTransportNotifie(true);
-            incidentRepository.save(incident);
-        }
-
         // Déclencher G4 (Transport) — RESOLU quand le technicien termine
         if (nouveauStatut == StatutIncident.RESOLU) {
             envoyerEvenementTransport(incident, "RESOLU");
@@ -259,9 +252,6 @@ public class IncidentServiceImpl implements IncidentService {
 
         // Déclencher G5 (Notification) — alerte rouge vers la direction
         notificationService.envoyerEscalade(incident, motif);
-
-        // Déclencher G4 (Transport) — notification d'escalade
-        envoyerEvenementTransport(incident, "ESCALADE");
     }
 
     @Override
@@ -625,8 +615,15 @@ public class IncidentServiceImpl implements IncidentService {
 
         // Notification G5 — confirmation au déclarant
         notificationService.envoyerConfirmation(saved);
-        // Alerte aux dispatchers
-        notificationService.envoyerAlerteDispatchers(saved);
+
+        // Déclencher G4 (Transport) — CONFIRME au moment du signalement
+        try {
+            envoyerEvenementTransport(saved, "CONFIRME");
+            saved.setTransportNotifie(true);
+            saved = incidentRepository.save(saved);
+        } catch (Exception e) {
+            log.error("Erreur lors de l'envoi de l'événement CONFIRME à G4 (Transport) pour l'incident {}", saved.getReference(), e);
+        }
 
         return SignalementResponseDTO.builder()
                 .incidentId(saved.getId())
