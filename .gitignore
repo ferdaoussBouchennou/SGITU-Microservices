@@ -8,6 +8,9 @@
 # Livraisons ZIP locales (ne pas versionner)
 *.zip
 
+# Fichiers de dump/arborescence locaux
+directory-tree.txt
+
 # Operating System Files and Logs
 .DS_Store
 Thumbs.db

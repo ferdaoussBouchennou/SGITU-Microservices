@@ -205,8 +205,59 @@ services:
   # ---------------------------------------------------------------
 
   # ---------------------------------------------------------------
-  #  G6 — (ajoutez votre service ici)
+  #  G6 — Service Paiement (port 8086)
   # ---------------------------------------------------------------
+  payment-service:
+    build:
+      context: ./service-paiement
+      dockerfile: Dockerfile
+    image: sgitu/payment-service:1.0.0
+    container_name: g6-payment-service
+    ports:
+      - "8086:8086"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://g6-payment-db:3306/payment_db?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: sgitu
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-sgitupassword}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_SHOW_SQL: "false"
+      SPRING_SQL_INIT_MODE: always
+      JWT_SECRET: ${JWT_SECRET:-SGITU_G6_JWT_SECRET_KEY_CHANGE_ME_IN_PRODUCTION_256BITS!!}
+      JWT_EXPIRATION: 86400000
+      SPRING_PROFILES_ACTIVE: docker
+      SERVER_PORT: 8086
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: sgitu-kafka:9092
+      SUBSCRIPTION_SERVICE_URL: ${G2_BASE_URL:-http://service-abonnement:8082}
+      TICKET_SERVICE_URL: ${G1_BASE_URL:-http://g1-user-service:8081}
+      NOTIFICATION_SERVICE_URL: ${G5_BASE_URL:-http://g5-notification-service:8085}
+    depends_on:
+      g6-payment-db:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    networks:
+      - sgitu-network
+      - payment-db-network
+
+  g6-payment-db:
+    image: mysql:8.0
+    container_name: g6-payment-db
+    ports:
+      - "3316:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: payment_db
+      MYSQL_USER: sgitu
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-sgitupassword}
+    volumes:
+      - payment_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - payment-db-network
 
   # ---------------------------------------------------------------
   #  G7 — Service Suivi des Véhicules (port 8087)
@@ -348,6 +399,7 @@ networks:
     driver: bridge
   g7-db-network:
     driver: bridge
+  payment-db-network:
   g4-db-network:
     driver: bridge
 
@@ -357,4 +409,5 @@ volumes:
   g7_db_data:
   g4_pg_data:
   kafka_data:
+  payment_data:
   grafana-data:
