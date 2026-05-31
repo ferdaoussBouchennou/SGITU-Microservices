@@ -400,6 +400,7 @@ networks:
   g7-db-network:
     driver: bridge
   payment-db-network:
+    driver: bridge
   g4-db-network:
     driver: bridge
 
