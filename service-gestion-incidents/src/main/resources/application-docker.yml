@@ -11,6 +11,46 @@ microservices:
   utilisateur:
     url: ${UTILISATEUR_SERVICE_URL:http://service-utilisateur:8083}
 
+spring:
+  cloud:
+    openfeign:
+      client:
+        config:
+          utilisateur-service:
+            connect-timeout: 2000
+            read-timeout: 3000
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      utilisateurService:
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+  retry:
+    instances:
+      utilisateurService:
+        max-attempts: 2
+        wait-duration: 500ms
+        retry-exceptions:
+          - feign.RetryableException
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+          - java.io.IOException
+  timelimiter:
+    instances:
+      utilisateurService:
+        timeout-duration: 3s
+
+resilience:
+  fallback:
+    email: fallback@sgitu.ma
+    phone: "+212000000000"
+
 # On peut aussi ajuster d'autres paramètres pour la production/docker si nécessaire
 logging:
   level:
