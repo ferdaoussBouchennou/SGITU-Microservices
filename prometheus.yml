@@ -59,6 +59,10 @@ scrape_configs:
   # ---------------------------------------------------------------
   #  G8 — (ajoutez votre bloc ici)
   # ---------------------------------------------------------------
+  - job_name: 'g8-analytics'
+    static_configs:
+      - targets: ['g8-analytics-service:8088']
+    metrics_path: '/actuator/prometheus'
 
   # ---------------------------------------------------------------
   #  G9 — (ajoutez votre bloc ici)
