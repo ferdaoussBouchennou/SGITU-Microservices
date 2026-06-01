@@ -28,6 +28,48 @@ services:
   # ---------------------------------------------------------------
   #  G1 — (ajoutez votre service ici)
   # ---------------------------------------------------------------
+  service-billetterie:
+    build:
+      context: ./service-billetterie
+      dockerfile: Dockerfile
+    container_name: service-billetterie
+    hostname: service-billetterie
+    ports:
+      - "8081:8081"
+    environment:
+      SERVER_PORT: 8081
+      MONGO_URI: mongodb://${billetterie_MONGO_ROOT_USERNAME}:${billetterie_MONGO_ROOT_PASSWORD}@billetterie-mongo:27017/${billetterie_MONGO_DATABASE}?authSource=admin
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PAYMENT_SERVICE_URL: ${G6_BASE_URL:-http://service-paiement:8086}
+      COORDINATION_SERVICE_URL: ${G4_BASE_URL:-http://g4-coordination:8084}
+    depends_on:
+      billetterie-mongo:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - sgitu-network
+      - billetterie-db-network
+
+  billetterie-mongo:
+    image: mongo:7
+    container_name: billetterie-mongo
+    hostname: billetterie-mongo
+    ports:
+      - "27018:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${billetterie_MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${billetterie_MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${billetterie_MONGO_DATABASE}
+    volumes:
+      - billetterie_mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - billetterie-db-network
 
   # ---------------------------------------------------------------
   #  G2 — Service Abonnement (port 8082)
@@ -473,15 +515,19 @@ networks:
     driver: bridge
   users-db-network:
     driver: bridge
+  billetterie-db-network:
+    driver: bridge
   g7-db-network:
     driver: bridge
   payment-db-network:
+    driver: bridge
   g4-db-network:
     driver: bridge
 
 volumes:
   g3_users_data:
   abonnement_data:
+  billetterie_mongo_data:
   g7_db_data:
   g4_pg_data:
   kafka_data:
