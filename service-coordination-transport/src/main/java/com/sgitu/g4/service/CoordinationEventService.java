@@ -9,7 +9,6 @@ import com.sgitu.g4.dto.CoordinationEventResponse;
 import com.sgitu.g4.dto.DetectBreakdownRequest;
 import com.sgitu.g4.dto.DetectDelayRequest;
 import com.sgitu.g4.dto.DetectDeviationRequest;
-import com.sgitu.g4.dto.DetectIncidentRequest;
 import com.sgitu.g4.entity.CoordinationEventEntity;
 import com.sgitu.g4.entity.CoordinationEventStatus;
 import com.sgitu.g4.entity.CoordinationEventType;
@@ -42,7 +41,6 @@ public class CoordinationEventService {
 	private final CoordinationKafkaPublisher kafkaPublisher;
 	private final ObjectMapper objectMapper;
 	private final G7VehicleClient g7VehicleClient;
-	private final G9IncidentClient g9IncidentClient;
 	private final SupervisionLogService supervisionLogService;
 
 	@Transactional
@@ -112,29 +110,6 @@ public class CoordinationEventService {
 				.occurredAt(Instant.now())
 				.build();
 		return finalize(EntityMapper.toDto(eventRepository.save(entity)));
-	}
-
-	@Transactional
-	public CoordinationEventResponse detectIncident(DetectIncidentRequest request) {
-		Mission mission = request.getMissionId() == null ? null : missionRepository.findById(request.getMissionId())
-				.orElseThrow(() -> new ResourceNotFoundException("Mission introuvable : " + request.getMissionId()));
-		Map<String, Object> p = new LinkedHashMap<>();
-		p.put("incidentReference", request.getIncidentReference());
-		p.put("resume", request.getResume());
-		p.put("vehiculeStatut", g7VehicleClient.fetchStatus(request.getVehiculeId()));
-		CoordinationEventEntity entity = CoordinationEventEntity.builder()
-				.type(CoordinationEventType.INCIDENT)
-				.status(CoordinationEventStatus.CONFIRME)
-				.mission(mission)
-				.vehiculeId(request.getVehiculeId())
-				.description(request.getResume())
-				.payloadJson(writeJson(p))
-				.occurredAt(Instant.now())
-				.build();
-		CoordinationEventEntity saved = eventRepository.save(entity);
-		CoordinationEventResponse dto = finalize(EntityMapper.toDto(saved));
-		g9IncidentClient.acknowledgeCorrelation(request.getIncidentReference(), dto.getId());
-		return dto;
 	}
 
 	@Transactional

@@ -1,15 +1,23 @@
 package ma.sgitu.g5.config;
 
+import lombok.RequiredArgsConstructor;
+import ma.sgitu.g5.security.GatewayHeaderAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
+@RequiredArgsConstructor
 public class SecurityConfig {
+
+    private final GatewayHeaderAuthenticationFilter gatewayHeaderAuthenticationFilter;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -29,9 +37,13 @@ public class SecurityConfig {
                     "/webjars/**"
                 ).permitAll()
                 
-                // Tout le reste = JWT obligatoire (à implémenter par l'équipe)
-                .anyRequest().permitAll()  // ← Remplace les 2 lignes .requestMatchers + .anyRequest
-            );
+                // Endpoints d'administration (nécessitent ROLE_ADMIN)
+                .requestMatchers("/api/notifications/admin/**").hasRole("ADMIN")
+                
+                // Tout le reste : exige une identite deja validee et transmise par l'API Gateway
+                .anyRequest().authenticated()
+            )
+            .addFilterBefore(gatewayHeaderAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         
         return http.build();
     }

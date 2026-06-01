@@ -13,6 +13,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.format.annotation.DateTimeFormat;
+import java.time.LocalDateTime;
 
 @RestController
 @RequestMapping("/abonnements/admin")
@@ -38,8 +40,9 @@ public class AdminAbonnementController {
     @PostMapping("/{id}/suspendre")
     public ResponseEntity<Void> suspendre(
             @PathVariable Long id,
-            @Parameter(description = "Motif de la suspension") @RequestParam String motif) {
-        abonnementService.suspendre(id, motif);
+            @Parameter(description = "Motif de la suspension") @RequestParam String motif,
+            @Parameter(description = "Date de fin de la suspension (optionnelle)") @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime dateFinSuspension) {
+        abonnementService.suspendre(id, motif, dateFinSuspension);
         return ResponseEntity.ok().build();
     }
 

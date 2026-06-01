@@ -16,8 +16,11 @@ public class G9IncidentClient {
 
 	private final IntegrationProperties integrationProperties;
 
-	public void acknowledgeCorrelation(String incidentReference, Long coordinationEventId) {
-		var body = Map.of("incidentReference", incidentReference, "coordinationEventId", coordinationEventId);
+	public void acknowledgeCorrelation(String incidentReference, Long incidentImpactId) {
+		var body = Map.of(
+				"incidentReference", incidentReference,
+				"incidentImpactId", incidentImpactId,
+				"coordinationEventId", incidentImpactId);
 		try {
 			RestClient.create(integrationProperties.getG9BaseUrl())
 					.post()

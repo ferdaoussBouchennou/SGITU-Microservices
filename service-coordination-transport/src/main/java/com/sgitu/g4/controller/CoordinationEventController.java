@@ -6,10 +6,14 @@ import com.sgitu.g4.dto.CoordinationEventResponse;
 import com.sgitu.g4.dto.DetectBreakdownRequest;
 import com.sgitu.g4.dto.DetectDelayRequest;
 import com.sgitu.g4.dto.DetectDeviationRequest;
-import com.sgitu.g4.dto.DetectIncidentRequest;
 import com.sgitu.g4.entity.CoordinationEventStatus;
 import com.sgitu.g4.entity.CoordinationEventType;
 import com.sgitu.g4.service.CoordinationEventService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +38,21 @@ public class CoordinationEventController {
 
 	@PostMapping
 	@ResponseStatus(HttpStatus.CREATED)
+	@Operation(summary = "Créer un événement de coordination")
+	@ApiResponses({
+			@ApiResponse(responseCode = "201", description = "Événement créé (mission inchangée)"),
+			@ApiResponse(responseCode = "404", description = "Mission introuvable")
+	})
+	@io.swagger.v3.oas.annotations.parameters.RequestBody(content = @Content(examples = @ExampleObject(value = """
+			{
+			  "type": "RETARD",
+			  "status": "SIGNALE",
+			  "missionId": 1,
+			  "vehiculeId": "VH-001",
+			  "description": "Retard signalé manuellement",
+			  "occurredAt": "2026-05-20T10:15:00Z"
+			}
+			""")))
 	public CoordinationEventResponse create(@Valid @RequestBody CoordinationEventRequest request) {
 		return coordinationEventService.create(request);
 	}
@@ -60,12 +79,28 @@ public class CoordinationEventController {
 
 	@PostMapping("/detect-delay")
 	@ResponseStatus(HttpStatus.CREATED)
+	@Operation(summary = "Détecter un retard (n'interrompt pas la mission)")
+	@ApiResponses({
+			@ApiResponse(responseCode = "201", description = "Événement RETARD créé"),
+			@ApiResponse(responseCode = "404", description = "Mission introuvable")
+	})
+	@io.swagger.v3.oas.annotations.parameters.RequestBody(content = @Content(examples = @ExampleObject(value = """
+			{"missionId": 1, "retardMinutes": 12, "cause": "Trafic dense zone centre"}
+			""")))
 	public CoordinationEventResponse detectDelay(@Valid @RequestBody DetectDelayRequest request) {
 		return coordinationEventService.detectDelay(request);
 	}
 
 	@PostMapping("/detect-deviation")
 	@ResponseStatus(HttpStatus.CREATED)
+	@Operation(summary = "Détecter une déviation (n'interrompt pas la mission)")
+	@ApiResponses({
+			@ApiResponse(responseCode = "201", description = "Événement DEVIATION créé"),
+			@ApiResponse(responseCode = "404", description = "Mission introuvable")
+	})
+	@io.swagger.v3.oas.annotations.parameters.RequestBody(content = @Content(examples = @ExampleObject(value = """
+			{"missionId": 1, "ecartMetres": 450, "details": "Écart par rapport au tracé prévu"}
+			""")))
 	public CoordinationEventResponse detectDeviation(@Valid @RequestBody DetectDeviationRequest request) {
 		return coordinationEventService.detectDeviation(request);
 	}
@@ -74,12 +109,6 @@ public class CoordinationEventController {
 	@ResponseStatus(HttpStatus.CREATED)
 	public CoordinationEventResponse detectBreakdown(@Valid @RequestBody DetectBreakdownRequest request) {
 		return coordinationEventService.detectBreakdown(request);
-	}
-
-	@PostMapping("/detect-incident")
-	@ResponseStatus(HttpStatus.CREATED)
-	public CoordinationEventResponse detectIncident(@Valid @RequestBody DetectIncidentRequest request) {
-		return coordinationEventService.detectIncident(request);
 	}
 
 	@PostMapping("/cancel-mission")

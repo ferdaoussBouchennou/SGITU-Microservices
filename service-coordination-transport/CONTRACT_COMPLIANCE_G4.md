@@ -48,7 +48,7 @@ Le code utilise **G1** pour la billetterie côté Kafka (`G1BilletterieClient`, 
 | Affectations | `GET /api/g4/affectations/vehicule/{vehiculeId}` | `AffectationController` | Conforme |
 | Affectations | `PUT /api/g4/affectations/{affectationId}` | `AffectationController` | Conforme |
 | Affectations | `DELETE /api/g4/affectations/{affectationId}` | `AffectationController` | Conforme |
-| Missions | `POST /api/g4/missions` | `MissionController` | Conforme |
+| Missions | `POST /api/g4/missions` | `MissionController` | Conforme (409 si véhicule déjà EN_COURS) |
 | Missions | `GET /api/g4/missions` | `MissionController` | Conforme |
 | Missions | `GET /api/g4/missions/actives` | `MissionController` | Conforme |
 | Missions | `GET /api/g4/missions/{missionId}` | `MissionController` | Conforme |
@@ -64,12 +64,12 @@ Le code utilise **G1** pour la billetterie côté Kafka (`G1BilletterieClient`, 
 | Events | `POST /api/g4/events/detect-delay` | `CoordinationEventController` | Conforme |
 | Events | `POST /api/g4/events/detect-deviation` | `CoordinationEventController` | Conforme |
 | Events | `POST /api/g4/events/detect-breakdown` | `CoordinationEventController` | Conforme |
-| Events | `POST /api/g4/events/detect-incident` | `CoordinationEventController` | Conforme |
+| Incidents G9 | `POST /api/g4/incident-impacts` | `IncidentImpactController` | Conforme (séparé des événements coordination) |
 | Events | `POST /api/g4/events/cancel-mission` | `CoordinationEventController` | Conforme |
 | Notifications | `POST /api/notifications/send` | `NotificationController` | Conforme (`202 Accepted`) |
 | Supervision | `GET /api/g4/health` | `G4SupervisionController` | Conforme |
 | Supervision | `GET /api/v1/operator/status` | `OperatorStatusController` | Conforme |
-| Supervision | `GET /api/g4/logs` | `G4SupervisionController` | Conforme |
+| Supervision | `GET /api/g4/logs` | `G4SupervisionController` | Conforme (public, sans JWT) |
 
 ## 1 bis) Périmètre conducteurs (G3 — gestion des utilisateurs)
 
@@ -125,8 +125,20 @@ Tout document d’interface doit désigner **G1** pour les actions commerciales 
 | Exigence | Implémentation | Statut |
 |---|---|---|
 | Kafka topic `incident.transport.topic` | `G9IncidentKafkaConsumer` | Conforme |
-| Mapping du payload JSON G9 | `G9IncidentKafkaMessage` + mapping vers `CoordinationEventRequest` | Conforme |
-| Mapping statuts/types vers événements G4 | `mapType` / `mapStatus` | Conforme |
+| Mapping du payload JSON G9 | `G9IncidentKafkaMessage` → `MissionIncidentImpact` | Conforme |
+| Validation contrat JSON Kafka | `KafkaContractValidator` | Conforme |
+
+## 5 bis) Rôles synchronisés G3 / G10 / G4
+
+| Rôle G3 (JWT) | Périmètre G4 |
+|---|---|
+| `ROLE_G4_OPERATOR` | CRUD lignes, trajets, arrêts, horaires + lecture |
+| `ROLE_DISPATCHER` | CRUD missions, affectations, événements, notifications + lecture |
+| `ROLE_G4_ADMIN` | Supervision + tous droits d’écriture |
+| `ROLE_DRIVER` | Référence `chauffeurId` (G3) ; pas de CRUD back-office G4 |
+| `ROLE_PASSENGER`, `ROLE_STUDENT` | Hors périmètre G4 |
+
+Détail : `docs/ROLES_G3_G4_ALIGNMENT.md`. Implémentation : `SecurityConfig.java`.
 
 ## 6) Paramètres de configuration a fournir en environnement
 

@@ -39,6 +39,7 @@ public class G7VehiclePositionKafkaConsumer {
 	public void onVehiclePosition(String rawMessage) {
 		try {
 			G7VehiclePositionMessage msg = objectMapper.readValue(rawMessage, G7VehiclePositionMessage.class);
+			KafkaContractValidator.validateG7Position(msg);
 			supervisionLogService.add("INFO", "KAFKA-G7", "Position reçue vehicule=" + msg.getVehiculeId());
 			Optional<Mission> missionOpt = missionRepository.findByVehiculeIdOrderByCreatedAtDesc(msg.getVehiculeId())
 					.stream()

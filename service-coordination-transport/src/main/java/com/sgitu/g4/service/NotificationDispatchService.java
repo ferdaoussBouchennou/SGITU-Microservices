@@ -12,10 +12,20 @@ public class NotificationDispatchService {
 
 	private final G5NotificationClient g5NotificationClient;
 	private final SupervisionLogService supervisionLogService;
+	private final PendingNotificationService pendingNotificationService;
 
 	public NotificationSendResponse send(NotificationSendRequest request) {
 		NotificationSendResponse response = g5NotificationClient.dispatch(request);
-		String level = "ERROR".equals(response.getStatus()) ? "ERROR" : "DEGRADED".equals(response.getStatus()) ? "WARN" : "INFO";
+		if ("DEGRADED".equals(response.getStatus())) {
+			pendingNotificationService.enqueue(request);
+			response = NotificationSendResponse.builder()
+					.status("DEGRADED")
+					.correlationId(request.effectiveNotificationId())
+					.detail("Service G5 injoignable — notification stockée localement (PENDING), renvoi automatique")
+					.build();
+		}
+		String level = "ERROR".equals(response.getStatus()) ? "ERROR"
+				: "DEGRADED".equals(response.getStatus()) ? "WARN" : "INFO";
 		supervisionLogService.add(level, "NOTIFICATION", request.getEventType() + " -> " + response.getStatus());
 		return response;
 	}

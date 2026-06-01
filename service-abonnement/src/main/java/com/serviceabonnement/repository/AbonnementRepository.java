@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface AbonnementRepository extends JpaRepository<Abonnement, Long> {
@@ -17,7 +18,11 @@ public interface AbonnementRepository extends JpaRepository<Abonnement, Long> {
 
     Page<Abonnement> findByUserId(Long userId, Pageable pageable);
 
-    java.util.Optional<Abonnement> findByPaiementId(String paiementId);
+    List<Abonnement> findByUserIdAndStatut(Long userId, StatutAbonnement statut);
 
-    java.util.Optional<Abonnement> findByRemboursementId(String remboursementId);
+    Optional<Abonnement> findByPaiementId(String paiementId);
+
+    java.util.Optional<Abonnement> findByUserIdAndPlanIdPlanAndStatut(Long userId, Long idPlan, StatutAbonnement statut);
+
+    Optional<Abonnement> findByRemboursementId(String remboursementId);
 }

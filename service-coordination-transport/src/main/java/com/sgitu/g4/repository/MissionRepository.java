@@ -11,4 +11,8 @@ public interface MissionRepository extends JpaRepository<Mission, Long> {
 	List<Mission> findByStatut(StatutMission statut);
 
 	List<Mission> findByVehiculeIdOrderByCreatedAtDesc(String vehiculeId);
+
+	boolean existsByVehiculeIdAndStatut(String vehiculeId, StatutMission statut);
+
+	boolean existsByVehiculeIdAndStatutAndIdNot(String vehiculeId, StatutMission statut, Long id);
 }

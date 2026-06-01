@@ -1,5 +1,6 @@
 package com.sgitu.g4.service;
 
+import com.sgitu.g4.config.KafkaAppProperties;
 import com.sgitu.g4.dto.G4HealthResponse;
 import com.sgitu.g4.dto.OperatorStatusResponse;
 import com.sgitu.g4.entity.StatutMission;
@@ -21,6 +22,8 @@ public class SupervisionAggregateService {
 	private final DataSource dataSource;
 	private final MissionRepository missionRepository;
 	private final IntegrationHealthProbe integrationHealthProbe;
+	private final PendingNotificationService pendingNotificationService;
+	private final KafkaAppProperties kafkaAppProperties;
 
 	@Value("${info.app.version:0.0.1-SNAPSHOT}")
 	private String buildVersion;
@@ -36,6 +39,9 @@ public class SupervisionAggregateService {
 			db = "DOWN: " + ex.getMessage();
 		}
 		components.put("database", db);
+		components.put("kafka", kafkaAppProperties.isEnabled() ? "ENABLED" : "DISABLED");
+		components.put("pendingNotifications", String.valueOf(pendingNotificationService.countPending()));
+		components.put("missionsEnCours", String.valueOf(missionRepository.findByStatut(StatutMission.EN_COURS).size()));
 		String status = db.startsWith("UP") ? "UP" : "DEGRADED";
 		return G4HealthResponse.builder()
 				.status(status)

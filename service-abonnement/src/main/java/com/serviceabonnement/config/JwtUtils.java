@@ -1,50 +1,77 @@
 package com.serviceabonnement.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.util.Base64;
-import java.util.Map;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 @Component
 public class JwtUtils {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    @Value("${jwt.secret}")
+    private String jwtSecret;
+
+    private javax.crypto.SecretKey getSignKey() {
+        return Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
+    }
 
     public String extractUsername(String token) {
-        return (String) extractAllClaims(token).get("sub");
+        return extractAllClaims(token).getSubject();
     }
 
-    @SuppressWarnings("unchecked")
-    public java.util.List<String> extractRoles(String token) {
-        Object roles = extractAllClaims(token).get("roles");
-        if (roles instanceof java.util.List) {
-            return (java.util.List<String>) roles;
+    public String extractEmail(String token) {
+        Claims claims = extractAllClaims(token);
+        String email = (String) claims.get("email");
+        if (email == null) {
+            email = claims.getSubject();
         }
-        return java.util.Collections.emptyList();
+        return email;
     }
 
+    /**
+     * Extracts the list of roles from the JWT token.
+     * Supports two claim formats emitted by the User Service (G3):
+     *   - "roles" : ["ROLE_PASSENGER", ...] (preferred — list)
+     *   - "role"  : "ROLE_STUDENT"          (fallback — single string)
+     */
     @SuppressWarnings("unchecked")
-    private Map<String, Object> extractAllClaims(String token) {
-        try {
-            String[] parts = token.split("\\.");
-            if (parts.length < 2) {
-                throw new IllegalArgumentException("Invalid JWT token format");
-            }
-            String payload = new String(Base64.getUrlDecoder().decode(parts[1]));
-            return objectMapper.readValue(payload, Map.class);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to decode JWT payload", e);
+    public List<String> extractRoles(String token) {
+        Claims claims = extractAllClaims(token);
+
+        // Primary: list of roles under "roles" key
+        Object rolesObj = claims.get("roles");
+        if (rolesObj instanceof List) {
+            return (List<String>) rolesObj;
         }
+
+        // Fallback: single role string under "role" key
+        Object roleObj = claims.get("role");
+        if (roleObj instanceof String) {
+            return List.of((String) roleObj);
+        }
+
+        return List.of();
+    }
+
+    public Claims extractAllClaims(String token) {
+        return Jwts.parser()
+                .verifyWith(getSignKey())   // JJWT 0.12+ API (replaces deprecated setSigningKey)
+                .build()
+                .parseSignedClaims(token)   // JJWT 0.12+ API (replaces deprecated parseClaimsJws)
+                .getPayload();
     }
 
     public boolean isTokenValid(String token) {
-        // En mode "total trust", on vérifie juste que le format est correct
         try {
-            extractAllClaims(token);
+            extractAllClaims(token); // throws if signature invalid or token expired
             return true;
         } catch (Exception e) {
             return false;
         }
     }
 }
+

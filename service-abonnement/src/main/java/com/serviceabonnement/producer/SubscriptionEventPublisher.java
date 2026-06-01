@@ -51,6 +51,15 @@ public class SubscriptionEventPublisher {
         send(NotificationEventType.ECHEC_SOUSCRIPTION, user, metadata, NotificationPriority.HIGH);
     }
 
+    // Overloaded version that accepts userId and email directly (when UserDTO is not available)
+    public void publishEchecSouscription(Long userId, String email, String phone, String planNom, String motif) {
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("planNom", planNom);
+        metadata.put("motif", motif);
+
+        sendDirect(NotificationEventType.ECHEC_SOUSCRIPTION, userId, email, phone, metadata, NotificationPriority.HIGH);
+    }
+
     // --- 3. RAPPEL_EXPIRATION ---
     public void publishRappelExpiration(UserDTO user, Abonnement abonnement, long joursRestants) {
         Map<String, Object> metadata = new HashMap<>();
@@ -187,6 +196,60 @@ public class SubscriptionEventPublisher {
                 .build();
 
         log.info("Publishing {} event for user {}", type, user.getId());
+        try {
+            kafkaTemplate.send(topic, event);
+        } catch (Exception e) {
+            log.error("Échec de l'envoi de la notification Kafka (type: {}): {}", type, e.getMessage());
+        }
+    }
+
+    // --- CORE SEND METHOD (Direct userId/email version) ---
+    private void sendDirect(NotificationEventType type, Long userId, String email, String phone, Map<String, Object> metadata, NotificationPriority priority) {
+        RecipientDTO recipient = RecipientDTO.builder()
+                .userId(userId.toString())
+                .email(email)
+                .phone(phone)
+                .deviceToken(null)
+                .build();
+
+        NotificationEventDTO event = NotificationEventDTO.builder()
+                .notificationId(UUID.randomUUID().toString())
+                .sourceService(SOURCE_SERVICE)
+                .eventType(type)
+                .channel(NotificationChannel.EMAIL)
+                .priority(priority)
+                .recipient(recipient)
+                .metadata(metadata)
+                .build();
+
+        log.info("Publishing {} event for user {}", type, userId);
+        try {
+            kafkaTemplate.send(topic, event);
+        } catch (Exception e) {
+            log.error("Échec de l'envoi direct de la notification Kafka (type: {}): {}", type, e.getMessage());
+        }
+    }
+
+    // --- CORE SEND METHOD (Direct userId/email version) ---
+    private void sendDirect(NotificationEventType type, Long userId, String email, String phone, Map<String, Object> metadata, NotificationPriority priority) {
+        RecipientDTO recipient = RecipientDTO.builder()
+                .userId(userId.toString())
+                .email(email)
+                .phone(phone)
+                .deviceToken(null)
+                .build();
+
+        NotificationEventDTO event = NotificationEventDTO.builder()
+                .notificationId(UUID.randomUUID().toString())
+                .sourceService(SOURCE_SERVICE)
+                .eventType(type)
+                .channel(NotificationChannel.EMAIL)
+                .priority(priority)
+                .recipient(recipient)
+                .metadata(metadata)
+                .build();
+
+        log.info("Publishing {} event for user {}", type, userId);
         kafkaTemplate.send(topic, event);
     }
 }

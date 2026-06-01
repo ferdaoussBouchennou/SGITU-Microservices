@@ -12,7 +12,7 @@ import java.util.List;
 
 public interface AbonnementService {
     // Actions Abonnés
-    Abonnement souscrire(Long userId, Long planId);
+    Abonnement souscrire(Long userId, Long planId, String email);
     Abonnement renouveler(Long abonnementId);
     Abonnement renouvelerManuel(Long abonnementId);
     void demanderAnnulation(Long abonnementId);
@@ -20,7 +20,7 @@ public interface AbonnementService {
     Abonnement toggleAutoRenouvellement(Long abonnementId, boolean enable);
     
     // Actions Superviseurs
-    void suspendre(Long abonnementId, String motif);
+    void suspendre(Long abonnementId, String motif, java.time.LocalDateTime dateFinSuspension);
     void forcerAnnulation(Long abonnementId, String motif);
     void forcerRenouvellement(Long abonnementId);
     
@@ -35,4 +35,5 @@ public interface AbonnementService {
     void confirmerPaiement(PaymentCallbackDTO callback);
     void confirmerRemboursement(RefundCallbackDTO callback);
     ActiveSubscriptionResponseDTO verifierAbonnementActif(Long userId);
+    Double calculerRemboursement(Abonnement abonnement);
 }

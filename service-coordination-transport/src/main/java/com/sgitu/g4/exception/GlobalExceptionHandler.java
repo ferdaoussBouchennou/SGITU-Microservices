@@ -12,6 +12,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.Instant;
 import java.util.List;
@@ -30,6 +31,11 @@ public class GlobalExceptionHandler {
 		return build(HttpStatus.BAD_REQUEST, "BAD_REQUEST", ex.getMessage(), req, null);
 	}
 
+	@ExceptionHandler(ConflictException.class)
+	public ResponseEntity<ApiErrorResponse> conflict(ConflictException ex, HttpServletRequest req) {
+		return build(HttpStatus.CONFLICT, "CONFLICT", ex.getMessage(), req, null);
+	}
+
 	@ExceptionHandler(ForbiddenOperationException.class)
 	public ResponseEntity<ApiErrorResponse> forbiddenOp(ForbiddenOperationException ex, HttpServletRequest req) {
 		return build(HttpStatus.FORBIDDEN, "FORBIDDEN", ex.getMessage(), req, null);
@@ -43,6 +49,14 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler(BadCredentialsException.class)
 	public ResponseEntity<ApiErrorResponse> badCredentials(BadCredentialsException ex, HttpServletRequest req) {
 		return build(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "Identifiants invalides", req, null);
+	}
+
+	@ExceptionHandler(MethodArgumentTypeMismatchException.class)
+	public ResponseEntity<ApiErrorResponse> typeMismatch(MethodArgumentTypeMismatchException ex, HttpServletRequest req) {
+		String detail = ex.getValue() != null ? String.valueOf(ex.getValue()) : "?";
+		String msg = "Paramètre invalide '" + ex.getName() + "' : " + detail
+				+ " (types coordination : RETARD, DEVIATION, PANNE, ANNULATION_MISSION ; incidents G9 : /api/g4/incident-impacts)";
+		return build(HttpStatus.BAD_REQUEST, "BAD_REQUEST", msg, req, null);
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)

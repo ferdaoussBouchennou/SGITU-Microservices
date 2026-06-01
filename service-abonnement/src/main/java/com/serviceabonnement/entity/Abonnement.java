@@ -59,6 +59,9 @@ public class Abonnement {
     @Column(name = "remboursement_id")
     private String remboursementId;
 
+    @Column(name = "user_email")
+    private String userEmail;
+
     @Column(name = "paiement_id")
     private String paiementId;
 
