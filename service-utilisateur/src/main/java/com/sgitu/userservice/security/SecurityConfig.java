@@ -48,14 +48,15 @@ public class SecurityConfig {
                 // Public -- account creation (called by G10 on registration)
                 .requestMatchers(HttpMethod.POST, "/users").permitAll()
 
-                // Swagger / OpenAPI, Actuator & Error endpoint
+                // Swagger / OpenAPI, Actuator, Chaos & Error endpoint
                 .requestMatchers(
                     "/error",
                     "/swagger-ui/**",
                     "/swagger-ui.html",
                     "/v3/api-docs/**",
                     "/v3/api-docs.yaml",
-                    "/actuator/**"
+                    "/actuator/**",
+                    "/chaos/**"
                 ).permitAll()
 
                 // Existence check -- any authenticated service
