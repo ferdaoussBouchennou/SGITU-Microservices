@@ -123,7 +123,7 @@ services:
       - "8889:80"
     environment:
       - PMA_ARBITRARY=1
-      - PMA_HOST= 
+      - PMA_HOST=
       - PMA_PORT=3306
     depends_on:
       - db-abonnement
@@ -506,6 +506,45 @@ services:
   # ---------------------------------------------------------------
   #  G9 — (ajoutez votre service ici)
   # ---------------------------------------------------------------
+  g9-service:
+    build:
+      context: ./service-gestion-incidents
+      dockerfile: Dockerfile
+    container_name: service-gestion-incidents
+    ports:
+      - "8089:8089"
+    depends_on:
+      db-g9:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_URL=jdbc:mysql://db-g9:3306/sgitu_incidents?createDatabaseIfNotExist=true&useSSL=false&serverTimezone=UTC
+      - DB_USERNAME=root
+      - DB_PASSWORD=
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - JWT_SECRET=${JWT_SECRET:-SGITU_G3_JWT_SECRET_KEY_CHANGE_ME_IN_PRODUCTION_256BITS!!}
+    networks:
+      - sgitu-network
+      - g9-db-network
+
+  db-g9:
+    image: mysql:8.0
+    container_name: db-g9
+    ports:
+      - "3309:3306"
+    environment:
+      MYSQL_DATABASE: sgitu_incidents
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+    volumes:
+      - g9_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      timeout: 5s
+      retries: 10
+    networks:
+      - g9-db-network
 
   # ---------------------------------------------------------------
   #  G10 — (ajoutez votre service ici)
@@ -529,6 +568,7 @@ services:
       - g7-service
       - user-service
       - g8-analytics-service
+      - g9-service
 
   grafana:
     image: grafana/grafana:latest
@@ -601,6 +641,8 @@ networks:
     driver: bridge
   g8-private-network:
     driver: bridge
+  g9-db-network:
+    driver: bridge
 
 volumes:
   g3_users_data:
@@ -613,3 +655,4 @@ volumes:
   grafana-data:
   mysql_notification_data:
   g8_mongo_data:
+  g9_db_data:
