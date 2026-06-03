@@ -69,7 +69,9 @@ spring:
           timeout: 5000
           writetimeout: 5000
 
-# ── JWT (fourni par G10) ────────────────────────────────────
+# ── JWT (secret partagé fourni par G3 — Authentification) ───
+#   G3  : génère les tokens JWT et fournit le secret partagé.
+#   G10 : API Gateway, responsable de la validation du trafic externe.
 jwt:
   secret: ${JWT_SECRET}
   expiration: 86400000  # 24 heures en millisecondes
@@ -216,6 +218,7 @@ spring:
           starttls:
             enable: true
 
+# JWT (secret partagé fourni par G3 — Authentification)
 jwt:
   secret: ${JWT_SECRET}
 

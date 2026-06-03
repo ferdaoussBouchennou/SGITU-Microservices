@@ -2,6 +2,22 @@
 <configuration>
 
     <!-- ══════════════════════════════════════════════════════════════════
+         Patterns / conversions par défaut de Spring Boot (couleurs, etc.)
+    ══════════════════════════════════════════════════════════════════ -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         APPENDER CONSOLE — INDISPENSABLE
+         Sans cet appender (et le <root> plus bas), aucun log (ni erreur de
+         démarrage) n'apparaît sur la sortie standard / `docker logs`.
+    ══════════════════════════════════════════════════════════════════ -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${CONSOLE_LOG_PATTERN:-%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n}</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ══════════════════════════════════════════════════════════════════
          APPENDER 1 : Opérations admin générales
          Fichier : logs/admin-operations.log
          Rotation quotidienne, conservation 30 jours, max 100MB
@@ -101,5 +117,13 @@
     <logger name="ma.sgitu.g5.service.RetryServiceImpl" level="INFO" additivity="false">
         <appender-ref ref="ADMIN_FILE" />
     </logger>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         ROOT LOGGER — tous les autres logs (Spring, Hibernate, Kafka...)
+         vont sur la console. Sans ce bloc, le service démarre "en aveugle".
+    ══════════════════════════════════════════════════════════════════ -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+    </root>
 
 </configuration>

@@ -1,0 +1,512 @@
+{
+  "info": {
+    "_postman_id": "a5e1b2c3-d4e5-46f7-8901-g5notif000002",
+    "name": "SGITU - G5 Notification Service (Complet)",
+    "description": "Collection de test COMPLÈTE du microservice G5 (Notifications).\n\nBase URL : http://localhost:8085\n\nCOUVERTURE\n----------\n0. Santé & Observabilité (health public, Actuator, Prometheus, OpenAPI)\n1. Notifications (EMAIL / SMS / PUSH / LOG + validations)\n2. Idempotence (QUEUED puis ALREADY_QUEUED sur le même id)\n3. Résilience (retry, force-retry, circuit breaker Resilience4j, échec SMS)\n4. Admin (ROLE_ADMIN : stats, filtres, suppression, force-retry...)\n5. Sécurité (401 sans token, 403 user sur admin, 401 token invalide)\n\nAUTHENTIFICATION (automatique)\n------------------------------\nUn script pre-request au niveau collection génère 3 tokens HS256 signés avec la variable `jwtSecret` (= JWT_SECRET du .env) :\n  - {{userToken}}    -> ROLE_USER\n  - {{adminToken}}   -> ROLE_ADMIN\n  - {{invalidToken}} -> signé avec un MAUVAIS secret (pour tester le rejet 401)\n\nRien à coller manuellement. Lancez les dossiers du haut vers le bas (Runner).\n\nNB RÉSILIENCE : l'envoi est asynchrone. Le SMS échoue (Twilio non configuré) -> après les tentatives la notif passe FAILED, puis devient relançable. Le circuit breaker `notificationProvider` est observable via /actuator/prometheus.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// === Génération automatique des JWT (HS256) ===",
+          "function base64url(source) {",
+          "    let enc = CryptoJS.enc.Base64.stringify(source);",
+          "    return enc.replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_');",
+          "}",
+          "function generateJWT(secret, payload) {",
+          "    const header = { alg: 'HS256', typ: 'JWT' };",
+          "    const encHeader = base64url(CryptoJS.enc.Utf8.parse(JSON.stringify(header)));",
+          "    const encPayload = base64url(CryptoJS.enc.Utf8.parse(JSON.stringify(payload)));",
+          "    const data = encHeader + '.' + encPayload;",
+          "    const signature = CryptoJS.HmacSHA256(data, secret);",
+          "    return data + '.' + base64url(signature);",
+          "}",
+          "const secret = pm.collectionVariables.get('jwtSecret');",
+          "const now = Math.floor(Date.now() / 1000);",
+          "const exp = now + 86400;",
+          "const base = { sourceService: 'G5_NOTIFICATION', iat: now, exp: exp };",
+          "pm.collectionVariables.set('userToken', generateJWT(secret, Object.assign({ sub: pm.collectionVariables.get('userId') || '123', roles: ['ROLE_USER'] }, base)));",
+          "pm.collectionVariables.set('adminToken', generateJWT(secret, Object.assign({ sub: 'admin', roles: ['ROLE_ADMIN'] }, base)));",
+          "pm.collectionVariables.set('invalidToken', generateJWT('CECI_EST_UN_MAUVAIS_SECRET_NON_RECONNU_PAR_G5_XXXX', Object.assign({ sub: 'pirate', roles: ['ROLE_ADMIN'] }, base)));"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8085", "type": "string" },
+    { "key": "jwtSecret", "value": "SGITU_G3_JWT_SECRET_KEY_CHANGE_ME_IN_PRODUCTION_256BITS!!", "type": "string" },
+    { "key": "userId", "value": "123", "type": "string" },
+    { "key": "userToken", "value": "", "type": "string" },
+    { "key": "adminToken", "value": "", "type": "string" },
+    { "key": "invalidToken", "value": "", "type": "string" },
+    { "key": "lastNotificationId", "value": "", "type": "string" },
+    { "key": "lastInternalId", "value": "", "type": "string" },
+    { "key": "idempotentId", "value": "", "type": "string" },
+    { "key": "smsNotificationId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "0. Sante & Observabilite",
+      "item": [
+        {
+          "name": "GET /health (public)",
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('Service UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+            ] } }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/notifications/health", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "health"] },
+            "description": "Health-check public (aucun JWT requis)."
+          }
+        },
+        {
+          "name": "GET /actuator/health",
+          "event": [
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('Global UP', () => pm.expect(j.status).to.eql('UP'));",
+              "pm.test('Composant DB present', () => pm.expect(j.components).to.have.property('db'));"
+            ] } }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/actuator/health", "host": ["{{baseUrl}}"], "path": ["actuator", "health"] },
+            "description": "Santé détaillée Spring Boot Actuator : DB (MySQL), mail (SMTP), diskSpace, ping."
+          }
+        },
+        {
+          "name": "GET /actuator/info",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 200', () => pm.response.to.have.status(200));" ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/actuator/info", "host": ["{{baseUrl}}"], "path": ["actuator", "info"] }
+          }
+        },
+        {
+          "name": "GET /actuator/metrics",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Liste de metriques', () => pm.expect(pm.response.json()).to.have.property('names'));"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/actuator/metrics", "host": ["{{baseUrl}}"], "path": ["actuator", "metrics"] }
+          }
+        },
+        {
+          "name": "GET /actuator/prometheus (circuit breaker)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Metrique circuit breaker Resilience4j exposee', () => pm.expect(pm.response.text()).to.include('resilience4j_circuitbreaker_state'));",
+            "pm.test('Instance notificationProvider presente', () => pm.expect(pm.response.text()).to.include('name=\"notificationProvider\"'));"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/actuator/prometheus", "host": ["{{baseUrl}}"], "path": ["actuator", "prometheus"] },
+            "description": "Métriques Prometheus, incluant l'état du circuit breaker Resilience4j 'notificationProvider'."
+          }
+        },
+        {
+          "name": "GET /api-docs (OpenAPI)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Spec OpenAPI', () => pm.expect(pm.response.json()).to.have.property('openapi'));"
+          ] } } ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api-docs", "host": ["{{baseUrl}}"], "path": ["api-docs"] },
+            "description": "Spécification OpenAPI (publique). Swagger UI : {{baseUrl}}/swagger-ui.html"
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Notifications (User JWT)",
+      "item": [
+        {
+          "name": "POST /send - EMAIL",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 202', () => pm.response.to.have.status(202));",
+            "const j = pm.response.json();",
+            "pm.test('QUEUED/ALREADY_QUEUED', () => pm.expect(['QUEUED','ALREADY_QUEUED']).to.include(j.status));",
+            "if (j.notificationId) pm.collectionVariables.set('lastNotificationId', j.notificationId);"
+          ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"notificationId\": \"{{$guid}}\",\n  \"sourceService\": \"G4_COORDINATION\",\n  \"eventType\": \"MISSION_CANCELLED\",\n  \"channel\": \"EMAIL\",\n  \"priority\": \"HIGH\",\n  \"recipient\": {\n    \"userId\": \"123\",\n    \"email\": \"client@example.com\"\n  },\n  \"metadata\": { \"missionCode\": \"MIS-2026-0012\", \"lineId\": 12 }\n}" },
+            "url": { "raw": "{{baseUrl}}/api/notifications/send", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "send"] },
+            "description": "Notification EMAIL (envoi async vers SMTP). 202 QUEUED immédiat."
+          }
+        },
+        {
+          "name": "POST /send - SMS",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 202', () => pm.response.to.have.status(202));" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"notificationId\": \"{{$guid}}\",\n  \"sourceService\": \"G1_BILLETTERIE\",\n  \"eventType\": \"TICKET_CREATED\",\n  \"channel\": \"SMS\",\n  \"priority\": \"NORMAL\",\n  \"recipient\": { \"userId\": \"123\", \"phone\": \"+212600000000\" },\n  \"metadata\": { \"ticketId\": \"TCK-9001\" }\n}" },
+            "url": { "raw": "{{baseUrl}}/api/notifications/send", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "send"] },
+            "description": "Notification SMS (Twilio). recipient.phone obligatoire."
+          }
+        },
+        {
+          "name": "POST /send - PUSH",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 202', () => pm.response.to.have.status(202));" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"notificationId\": \"{{$guid}}\",\n  \"sourceService\": \"G2_ABONNEMENT\",\n  \"eventType\": \"SUBSCRIPTION_EXPIRING\",\n  \"channel\": \"PUSH\",\n  \"priority\": \"NORMAL\",\n  \"recipient\": { \"userId\": \"123\", \"deviceToken\": \"fcm-token-abc\" },\n  \"metadata\": { \"abonnementId\": \"AB-555\" }\n}" },
+            "url": { "raw": "{{baseUrl}}/api/notifications/send", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "send"] },
+            "description": "Notification PUSH (Firebase FCM). recipient.deviceToken obligatoire."
+          }
+        },
+        {
+          "name": "POST /send - LOG",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 202', () => pm.response.to.have.status(202));" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"notificationId\": \"{{$guid}}\",\n  \"sourceService\": \"G9_INCIDENT\",\n  \"eventType\": \"AUDIT_LOG\",\n  \"channel\": \"LOG\",\n  \"priority\": \"LOW\",\n  \"recipient\": { \"userId\": \"system\" },\n  \"metadata\": { \"reference\": \"REF-AUDIT-01\" }\n}" },
+            "url": { "raw": "{{baseUrl}}/api/notifications/send", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "send"] },
+            "description": "Canal LOG : écrit dans logs/admin-notifications.log. Pas de destinataire requis."
+          }
+        },
+        {
+          "name": "POST /send - 400 canal invalide",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', () => pm.response.to.have.status(400));" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"notificationId\": \"{{$guid}}\",\n  \"sourceService\": \"G4_COORDINATION\",\n  \"eventType\": \"TEST\",\n  \"channel\": \"FAX\",\n  \"priority\": \"LOW\",\n  \"recipient\": { \"userId\": \"123\", \"email\": \"client@example.com\" }\n}" },
+            "url": { "raw": "{{baseUrl}}/api/notifications/send", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "send"] },
+            "description": "Validation @Pattern : canal FAX non supporté -> 400."
+          }
+        },
+        {
+          "name": "POST /send - 400 email manquant",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 400', () => pm.response.to.have.status(400));" ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"notificationId\": \"{{$guid}}\",\n  \"sourceService\": \"G4_COORDINATION\",\n  \"eventType\": \"TEST\",\n  \"channel\": \"EMAIL\",\n  \"priority\": \"LOW\",\n  \"recipient\": { \"userId\": \"123\" }\n}" },
+            "url": { "raw": "{{baseUrl}}/api/notifications/send", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "send"] },
+            "description": "channel EMAIL mais recipient.email absent -> 400."
+          }
+        },
+        {
+          "name": "GET /{notificationId}",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "const j = pm.response.json();",
+            "if (j.id) pm.collectionVariables.set('lastInternalId', j.id);",
+            "pm.test('notificationId correspond', () => pm.expect(j.notificationId).to.eql(pm.collectionVariables.get('lastNotificationId')));"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications/{{lastNotificationId}}", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "{{lastNotificationId}}"] },
+            "description": "Consulte une notif par notificationId (issu du POST EMAIL). Stocke l'ID interne pour l'admin."
+          }
+        },
+        {
+          "name": "GET / (liste paginee)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Reponse paginee', () => pm.expect(pm.response.json()).to.have.property('content'));"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications?page=0&size=10&sort=id,desc", "host": ["{{baseUrl}}"], "path": ["api", "notifications"], "query": [ { "key": "page", "value": "0" }, { "key": "size", "value": "10" }, { "key": "sort", "value": "id,desc" } ] }
+          }
+        },
+        {
+          "name": "GET / (liste filtree)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 200', () => pm.response.to.have.status(200));" ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications?userId=123&status=SENT&sourceService=G4_COORDINATION&page=0&size=10", "host": ["{{baseUrl}}"], "path": ["api", "notifications"], "query": [ { "key": "userId", "value": "123" }, { "key": "status", "value": "SENT" }, { "key": "sourceService", "value": "G4_COORDINATION" }, { "key": "page", "value": "0" }, { "key": "size", "value": "10" } ] },
+            "description": "Filtres : userId, status (PENDING|SENT|FAILED), sourceService."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Idempotence",
+      "item": [
+        {
+          "name": "POST /send #1 (nouvel id) -> QUEUED",
+          "event": [
+            { "listen": "prerequest", "script": { "type": "text/javascript", "exec": [
+              "// Nouveau id stable pour CE run (réutilisé par la requête #2)",
+              "pm.collectionVariables.set('idempotentId', 'idem-' + Date.now());"
+            ] } },
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('Status 202', () => pm.response.to.have.status(202));",
+              "pm.test('Statut QUEUED', () => pm.expect(pm.response.json().status).to.eql('QUEUED'));"
+            ] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"notificationId\": \"{{idempotentId}}\",\n  \"sourceService\": \"G4_COORDINATION\",\n  \"eventType\": \"IDEMPOTENCE_TEST\",\n  \"channel\": \"LOG\",\n  \"priority\": \"LOW\",\n  \"recipient\": { \"userId\": \"123\" }\n}" },
+            "url": { "raw": "{{baseUrl}}/api/notifications/send", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "send"] },
+            "description": "Premier envoi d'un id neuf -> doit retourner QUEUED."
+          }
+        },
+        {
+          "name": "POST /send #2 (meme id) -> ALREADY_QUEUED",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 202', () => pm.response.to.have.status(202));",
+            "const j = pm.response.json();",
+            "pm.test('Statut ALREADY_QUEUED', () => pm.expect(j.status).to.eql('ALREADY_QUEUED'));",
+            "pm.test('currentStatus de la notif originale present', () => pm.expect(j).to.have.property('currentStatus'));",
+            "pm.test('sourceService original retourne', () => pm.expect(j.originalSourceService).to.eql('G4_COORDINATION'));"
+          ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"notificationId\": \"{{idempotentId}}\",\n  \"sourceService\": \"G4_COORDINATION\",\n  \"eventType\": \"IDEMPOTENCE_TEST\",\n  \"channel\": \"LOG\",\n  \"priority\": \"LOW\",\n  \"recipient\": { \"userId\": \"123\" }\n}" },
+            "url": { "raw": "{{baseUrl}}/api/notifications/send", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "send"] },
+            "description": "Renvoi du MÊME id (même sourceService) -> ALREADY_QUEUED avec les données de la notif originale (idempotence)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Resilience (retry + circuit breaker)",
+      "item": [
+        {
+          "name": "POST /send SMS (echec attendu) -> QUEUED",
+          "event": [
+            { "listen": "prerequest", "script": { "type": "text/javascript", "exec": [
+              "pm.collectionVariables.set('smsNotificationId', 'sms-fail-' + Date.now());"
+            ] } },
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('Status 202 (QUEUED)', () => pm.response.to.have.status(202));",
+              "pm.collectionVariables.set('smsNotificationId', pm.response.json().notificationId);"
+            ] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" }, { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"notificationId\": \"{{smsNotificationId}}\",\n  \"sourceService\": \"G1_BILLETTERIE\",\n  \"eventType\": \"TICKET_CREATED\",\n  \"channel\": \"SMS\",\n  \"priority\": \"NORMAL\",\n  \"recipient\": { \"userId\": \"123\", \"phone\": \"+212600000000\" }\n}" },
+            "url": { "raw": "{{baseUrl}}/api/notifications/send", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "send"] },
+            "description": "SMS sans Twilio configuré : accepté (202) puis l'envoi échoue de façon asynchrone -> passera FAILED après les tentatives. Sert à tester le retry et le circuit breaker."
+          }
+        },
+        {
+          "name": "Pause (laisser l'async + retries se terminer)",
+          "event": [ { "listen": "prerequest", "script": { "type": "text/javascript", "exec": [
+            "// Petite attente pour laisser le traitement asynchrone avancer.",
+            "const ms = 3000; const end = Date.now() + ms; while (Date.now() < end) {}"
+          ] } }, { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('OK', () => pm.expect(true).to.be.true);" ] } } ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/notifications/health", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "health"] },
+            "description": "Requête tampon avec ~3s d'attente avant de consulter le statut du SMS."
+          }
+        },
+        {
+          "name": "GET statut SMS (PENDING/FAILED/SENT)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "const j = pm.response.json();",
+            "if (j.id) pm.collectionVariables.set('lastInternalId', j.id);",
+            "pm.test('Statut connu', () => pm.expect(['PENDING','FAILED','SENT']).to.include(j.status));",
+            "console.log('Statut SMS =', j.status, '| retryCount =', j.retryCount);"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications/{{smsNotificationId}}", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "{{smsNotificationId}}"] },
+            "description": "Observe le statut et le retryCount du SMS (le backoff exponentiel peut le laisser PENDING un moment, puis FAILED)."
+          }
+        },
+        {
+          "name": "POST /{id}/retry (relance manuelle)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('202 (relance) ou 400 (statut != FAILED)', () => pm.expect([202,400]).to.include(pm.response.code));"
+          ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications/{{smsNotificationId}}/retry", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "{{smsNotificationId}}", "retry"] },
+            "description": "Relance manuelle : 202 si la notif est FAILED, sinon 400 (retry non applicable). Max 3 tentatives, backoff exponentiel."
+          }
+        },
+        {
+          "name": "GET circuit breaker (prometheus)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "const t = pm.response.text();",
+            "pm.test('Etat circuit breaker expose', () => pm.expect(t).to.include('resilience4j_circuitbreaker_state'));",
+            "const closed = /resilience4j_circuitbreaker_state\\{[^}]*name=\"notificationProvider\"[^}]*state=\"closed\"[^}]*\\}\\s+([0-9.]+)/.exec(t);",
+            "console.log('Etat CLOSED gauge =', closed ? closed[1] : 'n/a (etats agreges)');"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/actuator/prometheus", "host": ["{{baseUrl}}"], "path": ["actuator", "prometheus"] },
+            "description": "Vérifie l'état du circuit breaker 'notificationProvider' (CLOSED/OPEN/HALF_OPEN). Il s'ouvre si >= 50% d'échecs sur 10 appels."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Admin (ROLE_ADMIN)",
+      "item": [
+        {
+          "name": "GET /admin/stats",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "const j = pm.response.json();",
+            "pm.test('byStatus', () => pm.expect(j).to.have.property('byStatus'));",
+            "pm.test('byChannel', () => pm.expect(j).to.have.property('byChannel'));"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications/admin/stats", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "admin", "stats"] }
+          }
+        },
+        {
+          "name": "GET /admin/notifications (filtres)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 200', () => pm.response.to.have.status(200));" ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications/admin/notifications?status=SENT&channel=EMAIL&page=0&size=10", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "admin", "notifications"], "query": [ { "key": "status", "value": "SENT" }, { "key": "channel", "value": "EMAIL" }, { "key": "sourceService", "value": "", "disabled": true }, { "key": "userId", "value": "", "disabled": true }, { "key": "startDate", "value": "2026-01-01T00:00:00", "disabled": true }, { "key": "endDate", "value": "2026-12-31T23:59:59", "disabled": true }, { "key": "page", "value": "0" }, { "key": "size", "value": "10" } ] },
+            "description": "Filtres combinables : status, channel, sourceService, userId, startDate, endDate."
+          }
+        },
+        {
+          "name": "GET /admin/notifications/failed",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 200', () => pm.response.to.have.status(200));" ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications/admin/notifications/failed?page=0&size=10", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "admin", "notifications", "failed"], "query": [ { "key": "page", "value": "0" }, { "key": "size", "value": "10" } ] }
+          }
+        },
+        {
+          "name": "GET /admin/notifications/by-source/{src}",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 200', () => pm.response.to.have.status(200));" ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications/admin/notifications/by-source/G4_COORDINATION?page=0&size=10", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "admin", "notifications", "by-source", "G4_COORDINATION"], "query": [ { "key": "page", "value": "0" }, { "key": "size", "value": "10" } ] }
+          }
+        },
+        {
+          "name": "GET /admin/notifications/logs",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [ "pm.test('Status 200', () => pm.response.to.have.status(200));" ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications/admin/notifications/logs?page=0&size=10", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "admin", "notifications", "logs"], "query": [ { "key": "startDate", "value": "2026-01-01T00:00:00", "disabled": true }, { "key": "endDate", "value": "2026-12-31T23:59:59", "disabled": true }, { "key": "page", "value": "0" }, { "key": "size", "value": "10" } ] },
+            "description": "Notifications de canal LOG (fichiers logs admin)."
+          }
+        },
+        {
+          "name": "GET /admin/health/detailed",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('metrics present', () => pm.expect(pm.response.json()).to.have.property('metrics'));"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications/admin/health/detailed", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "admin", "health", "detailed"] }
+          }
+        },
+        {
+          "name": "POST /admin/notifications/{id}/force-retry",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 (force) ou 404', () => pm.expect([200,404]).to.include(pm.response.code));"
+          ] } } ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications/admin/notifications/{{lastInternalId}}/force-retry", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "admin", "notifications", "{{lastInternalId}}", "force-retry"] },
+            "description": "Force la relance (statut -> PENDING, retryCount -> 0) quel que soit le statut. Utilise l'ID interne."
+          }
+        },
+        {
+          "name": "DELETE /admin/notifications/{id}",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 (supprime) ou 404', () => pm.expect([200,404]).to.include(pm.response.code));"
+          ] } } ],
+          "request": {
+            "method": "DELETE",
+            "header": [ { "key": "Authorization", "value": "Bearer {{adminToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications/admin/notifications/{{lastInternalId}}", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "admin", "notifications", "{{lastInternalId}}"] },
+            "description": "Suppression définitive par ID interne. ATTENTION : destructif."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Securite",
+      "item": [
+        {
+          "name": "POST /send - 401 sans token",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('401 ou 403', () => pm.expect([401,403]).to.include(pm.response.code));"
+          ] } } ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"notificationId\": \"{{$guid}}\",\n  \"sourceService\": \"G4_COORDINATION\",\n  \"eventType\": \"TEST\",\n  \"channel\": \"EMAIL\",\n  \"priority\": \"LOW\",\n  \"recipient\": { \"userId\": \"123\", \"email\": \"client@example.com\" }\n}" },
+            "url": { "raw": "{{baseUrl}}/api/notifications/send", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "send"] },
+            "description": "Aucun JWT -> endpoint protégé -> 401/403."
+          }
+        },
+        {
+          "name": "GET /admin/stats - 403 token user",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('403 (accces refuse)', () => pm.response.to.have.status(403));"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{userToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications/admin/stats", "host": ["{{baseUrl}}"], "path": ["api", "notifications", "admin", "stats"] },
+            "description": "Token ROLE_USER sur endpoint admin -> 403."
+          }
+        },
+        {
+          "name": "GET / - 401 token invalide (mauvaise signature)",
+          "event": [ { "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('401 (signature invalide)', () => pm.response.to.have.status(401));"
+          ] } } ],
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{invalidToken}}" } ],
+            "url": { "raw": "{{baseUrl}}/api/notifications?page=0&size=5", "host": ["{{baseUrl}}"], "path": ["api", "notifications"], "query": [ { "key": "page", "value": "0" }, { "key": "size", "value": "5" } ] },
+            "description": "JWT signé avec un mauvais secret -> rejeté par G5 (401, 'Signature JWT invalide')."
+          }
+        }
+      ]
+    }
+  ]
+}

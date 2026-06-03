@@ -34,11 +34,12 @@ import ma.sgitu.g5.service.ITracingService;
  * STRATÉGIE D'ACCEPTATION DES TOKENS (G1–G10) :
  * ─────────────────────────────────────────────
  * G5 (Notification) est un service transverse utilisé par tous les groupes.
- * Les tokens sont émis par chaque groupe et signés avec le secret partagé
- * fourni par G10 (Auth). G5 valide la signature avec ce secret commun.
+ * Les tokens JWT sont générés par G3 (Authentification), qui fournit le secret
+ * partagé commun à tout le système. G5 valide la signature avec ce secret.
  *
  * TRAÇABILITÉ VERS G10 :
  * ─────────────────────
+ * G10 (API Gateway) est responsable de la validation du trafic externe.
  * Chaque requête authentifiée est tracée via Kafka (topic: token-validation)
  * vers G10 pour audit asynchrone. G3 (Utilisateurs) bénéficie d'un tag prioritaire.
  */
