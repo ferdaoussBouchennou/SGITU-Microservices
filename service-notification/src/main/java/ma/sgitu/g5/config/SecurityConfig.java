@@ -31,6 +31,7 @@ public class SecurityConfig {
                 // Public : health check + Swagger/OpenAPI
                 .requestMatchers(
                     "/api/notifications/health",
+                    "/actuator/**",
                     "/swagger-ui/**",
                     "/swagger-ui.html",
                     "/api-docs/**",
